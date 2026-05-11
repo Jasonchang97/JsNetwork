@@ -1,0 +1,6 @@
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+export DYLD_FRAMEWORK_PATH="@QT5_DIR@/lib"
+export QT_PLUGIN_PATH="@QT5_DIR@/plugins"
+export DYLD_LIBRARY_PATH="@VCPKG_LIB_DIR@/lib"
+exec "${DIR}/JsNetwork.bin" "$@"

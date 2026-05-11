@@ -1,0 +1,12 @@
+build/
+cmake-build-*/
+.cache/
+*.o
+*.d
+*.dylib
+*.so
+*.a
+.DS_Store
+Thumbs.db
+*.swp
+*~
