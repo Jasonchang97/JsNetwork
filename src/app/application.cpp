@@ -1,4 +1,4 @@
-﻿#include "application.h"
+#include "application.h"
 #include "ui/mainwindow.h"
 #include "ui/theme.h"
 #include "core/proxy_server.h"
@@ -18,7 +18,10 @@
 #include <QDebug>
 #include <QTimer>
 #include <QProcess>
+
+#ifndef Q_OS_WIN
 #include <unistd.h>
+#endif
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
