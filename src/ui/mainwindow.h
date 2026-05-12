@@ -62,6 +62,7 @@ private:
     // Status
     QLabel *m_statusLabel;
     QLabel *m_mitmLabel;
+    QLabel *m_captureLabel;
     QAction *m_mitmAction = nullptr;
     QAction *m_themeAction = nullptr;
     QAction *m_langAction = nullptr;

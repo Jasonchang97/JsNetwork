@@ -1,7 +1,9 @@
 #include "cert_manager.h"
 #include <QDir>
 #include <QFile>
+#ifndef Q_OS_WIN
 #include <sys/stat.h>
+#endif
 #include <thread>
 
 #include <openssl/pem.h>
@@ -11,6 +13,30 @@
 #include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+// ALPN callback for server-side: only accept http/1.1
+static int alpnSelectCallback(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                               const unsigned char *in, unsigned int inlen, void *arg)
+{
+    // Try to select "http/1.1" from client's list
+    // Client ALPN format: 1-byte-len + proto-name repeated
+    const unsigned char *p = in;
+    const unsigned char *end = in + inlen;
+    while (p < end) {
+        unsigned char protoLen = *p++;
+        if (p + protoLen > end) break;
+        if (protoLen == 8 && memcmp(p, "http/1.1", 8) == 0) {
+            *out = p;
+            *outlen = protoLen;
+            return SSL_TLSEXT_ERR_OK;
+        }
+        p += protoLen;
+    }
+    // No http/1.1 found — reject (client will retry with HTTP/1.1 or fail)
+    *out = nullptr;
+    *outlen = 0;
+    return SSL_TLSEXT_ERR_ALERT_FATAL;
+}
 
 CertManager::CertManager(QObject *parent)
     : QObject(parent)
@@ -73,7 +99,7 @@ bool CertManager::generateCA()
     X509_gmtime_adj(X509_get_notAfter(cert), 10L * 365 * 24 * 3600);
     X509_set_pubkey(cert, pkey);
 
-    X509_NAME *name = X509_get_subject_name(cert);
+    X509_NAME *name = const_cast<X509_NAME*>(X509_get_subject_name(cert));
     X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
         (const unsigned char *)"CN", -1, -1, 0);
     X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
@@ -124,7 +150,9 @@ bool CertManager::generateCA()
     }
 
     // Set permissions on key file
+#ifndef Q_OS_WIN
     chmod(m_caKeyPath.toUtf8().constData(), 0600);
+#endif
 
     m_caCert = cert;
     m_caKey = pkey;
@@ -179,10 +207,10 @@ X509 *CertManager::generateDomainCert(const QString &domain, EVP_PKEY *caKey, X5
     X509_set_pubkey(cert, pkey);
 
     // Subject: CN=domain
-    X509_NAME *name = X509_get_subject_name(cert);
+    X509_NAME *name = const_cast<X509_NAME*>(X509_get_subject_name(cert));
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
         (const unsigned char *)domain.toUtf8().constData(), -1, -1, 0);
-    X509_set_issuer_name(cert, X509_get_subject_name(caCert));
+    X509_set_issuer_name(cert, const_cast<X509_NAME*>(X509_get_subject_name(caCert)));
 
     // Add SAN (Subject Alternative Name) with the domain
     X509V3_CTX v3ctx;
@@ -228,11 +256,9 @@ SSL_CTX *CertManager::buildSslContext(X509 *domainCert, EVP_PKEY *domainKey)
         return nullptr;
     }
 
-    // Force HTTP/1.1 only (no HTTP/2) so the proxy can parse plaintext HTTP
-    static const unsigned char alpnProtos[] = {
-        8, 'h', 't', 't', 'p', '/', '1', '.', '1'  // "http/1.1"
-    };
-    SSL_CTX_set_alpn_protos(ctx, alpnProtos, sizeof(alpnProtos));
+    // Server-side ALPN: only accept http/1.1 so we can parse plaintext HTTP
+    // SSL_CTX_set_alpn_select_cb is the SERVER API (vs set_alpn_protos for client)
+    SSL_CTX_set_alpn_select_cb(ctx, alpnSelectCallback, nullptr);
 
     return ctx;
 }
@@ -287,10 +313,10 @@ SSL_CTX *CertManager::createSslContextForDomain(const QString &domain)
     X509_gmtime_adj(X509_get_notAfter(cert), 365L * 24 * 3600);
     X509_set_pubkey(cert, pkey);
 
-    X509_NAME *name = X509_get_subject_name(cert);
+    X509_NAME *name = const_cast<X509_NAME*>(X509_get_subject_name(cert));
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
         (const unsigned char *)domain.toUtf8().constData(), -1, -1, 0);
-    X509_set_issuer_name(cert, X509_get_subject_name(caCert));
+    X509_set_issuer_name(cert, const_cast<X509_NAME*>(X509_get_subject_name(caCert)));
 
     // Extensions
     X509V3_CTX v3ctx;

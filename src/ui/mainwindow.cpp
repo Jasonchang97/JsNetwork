@@ -174,8 +174,10 @@ void MainWindow::setupStatusBar()
 {
     m_statusLabel = new QLabel(this);
     m_mitmLabel = new QLabel(this);
+    m_captureLabel = new QLabel(this);
 
     statusBar()->addWidget(m_statusLabel);
+    statusBar()->addPermanentWidget(m_captureLabel);
     statusBar()->addPermanentWidget(m_mitmLabel);
 }
 
@@ -207,6 +209,10 @@ void MainWindow::retranslateUi()
     // Status bar
     m_statusLabel->setText(QString("%1 | %2: %3")
         .arg(t.translate("Ready"), t.translate("Captured")).arg(m_totalRequests));
+    if (m_captureLabel) {
+        m_captureLabel->setText(t.translate("Capture: on"));
+        m_captureLabel->setStyleSheet("color: #4ec9b0; font-weight: bold; padding: 0 8px;");
+    }
     setMitmStatus(m_mitmAction && m_mitmAction->isChecked());
 }
 

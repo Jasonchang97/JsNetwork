@@ -67,10 +67,39 @@ cmake --build build
 ### Windows 编译
 
 ```powershell
-# 需要 vcpkg 安装 Qt5 和 OpenSSL
-# 设置 CMAKE_PREFIX_PATH 指向 Qt5 安装路径
-cmake -B build -DBUILD_TESTS=ON -DCMAKE_PREFIX_PATH=C:\Qt\5.15.2\msvc2019_64
+# 前置条件：
+# - Visual Studio 2019 或更高版本（需要 MSVC C++ 编译器）
+# - CMake 3.14+
+# - Qt5 和 OpenSSL（位于 D:\master\debug\xwares\3rd\ 目录下）
+
+# 编译主程序 + 测试
+cd JsNetwork
+cmake -B build -G "Visual Studio 16 2019" -A Win32
 cmake --build build --config Release
+
+# 编译产物位于 build\Release\ 目录
+# 生成的文件包括：
+# - JsNetwork.exe        主程序
+# - Qt5CoreKso.dll 等    Qt 运行时库
+# - platforms\qwindows.dll  Qt 平台插件
+# - jsnetwork_tests.exe  测试程序
+```
+
+### Windows 打包
+
+**方式一：Inno Setup 安装包**
+```powershell
+# 安装 Inno Setup 6 后，打开 installer.iss 文件编译
+# 或使用命令行：
+"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+# 生成 dist\JsNetwork-v0.1.0-win32-setup.exe
+```
+
+**方式二：便携版 ZIP**
+```powershell
+# 运行打包脚本
+package.bat
+# 生成 dist\JsNetwork-v0.1.0-win32.zip
 ```
 
 ## 使用

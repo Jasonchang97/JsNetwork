@@ -1,21 +1,27 @@
-#include "proxy_config.h"
+﻿#include "proxy_config.h"
 
 #ifdef Q_OS_MAC
 #include <QProcess>
 #endif
 
 #ifdef Q_OS_WIN
-#include <QSettings>
-#endif
+#include <windows.h>
+#include <wininet.h>
+#pragma comment(lib, "wininet.lib")
 
-QString ProxyConfig::m_originalProxy;
+static const wchar_t *kInternetSettingsKey =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+
+static void notifyProxyChange()
+{
+    InternetSetOptionW(nullptr, INTERNET_OPTION_SETTINGS_CHANGED, nullptr, 0);
+    InternetSetOptionW(nullptr, INTERNET_OPTION_REFRESH, nullptr, 0);
+}
+#endif
 
 bool ProxyConfig::enableSystemProxy(quint16 port)
 {
-    QString proxyAddr = QString("127.0.0.1:%1").arg(port);
-
 #ifdef Q_OS_MAC
-    // Get current Wi-Fi service name
     QProcess proc;
     proc.start("networksetup", {"-listallnetworkservices"});
     proc.waitForFinished();
@@ -32,16 +38,8 @@ bool ProxyConfig::enableSystemProxy(quint16 port)
 
     if (wifiService.isEmpty()) return false;
 
-    // Save current settings
-    proc.start("networksetup", {"-getwebproxy", wifiService});
-    proc.waitForFinished();
-    m_originalProxy = QString::fromUtf8(proc.readAllStandardOutput());
-
-    // Set HTTP proxy
     proc.start("networksetup", {"-setwebproxy", wifiService, "127.0.0.1", QString::number(port)});
     proc.waitForFinished();
-
-    // Set HTTPS proxy
     proc.start("networksetup", {"-setsecurewebproxy", wifiService, "127.0.0.1", QString::number(port)});
     proc.waitForFinished();
 
@@ -49,11 +47,30 @@ bool ProxyConfig::enableSystemProxy(quint16 port)
 #endif
 
 #ifdef Q_OS_WIN
-    QSettings settings("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-                       QSettings::NativeFormat);
-    m_originalProxy = settings.value("ProxyServer").toString();
-    settings.setValue("ProxyEnable", 1);
-    settings.setValue("ProxyServer", proxyAddr);
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kInternetSettingsKey, 0,
+                      KEY_SET_VALUE, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    DWORD enable = 1;
+    RegSetValueExW(hKey, L"ProxyEnable", 0, REG_DWORD,
+                   (const BYTE *)&enable, sizeof(enable));
+
+    char proxyServer[64];
+    int len = wsprintfA(proxyServer, "127.0.0.1:%d", (int)port);
+    RegSetValueExA(hKey, "ProxyServer", 0, REG_SZ,
+                   (const BYTE *)proxyServer, len + 1);
+
+    // Bypass list: don't proxy localhost and private networks
+    const char *bypass = "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;"
+                         "172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;"
+                         "172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;"
+                         "172.29.*;172.30.*;172.31.*;192.168.*;<local>";
+    RegSetValueExA(hKey, "ProxyOverride", 0, REG_SZ,
+                   (const BYTE *)bypass, (DWORD)strlen(bypass) + 1);
+
+    RegCloseKey(hKey);
+    notifyProxyChange();
     return true;
 #endif
 
@@ -88,9 +105,21 @@ bool ProxyConfig::disableSystemProxy()
 #endif
 
 #ifdef Q_OS_WIN
-    QSettings settings("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-                       QSettings::NativeFormat);
-    settings.setValue("ProxyEnable", 0);
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kInternetSettingsKey, 0,
+                      KEY_SET_VALUE, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    DWORD enable = 0;
+    RegSetValueExW(hKey, L"ProxyEnable", 0, REG_DWORD,
+                   (const BYTE *)&enable, sizeof(enable));
+
+    // Clear ProxyServer value entirely
+    RegDeleteValueA(hKey, "ProxyServer");
+    RegDeleteValueA(hKey, "ProxyOverride");
+
+    RegCloseKey(hKey);
+    notifyProxyChange();
     return true;
 #endif
 
@@ -122,9 +151,17 @@ bool ProxyConfig::isSystemProxyEnabled()
 #endif
 
 #ifdef Q_OS_WIN
-    QSettings settings("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-                       QSettings::NativeFormat);
-    return settings.value("ProxyEnable", 0).toInt() == 1;
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kInternetSettingsKey, 0,
+                      KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+
+    DWORD enable = 0;
+    DWORD size = sizeof(enable);
+    RegQueryValueExW(hKey, L"ProxyEnable", nullptr, nullptr,
+                     (BYTE *)&enable, &size);
+    RegCloseKey(hKey);
+    return enable != 0;
 #endif
 
     return false;

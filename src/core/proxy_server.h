@@ -54,6 +54,8 @@ private:
 
     void handleConnect(Connection *conn);
     void handlePlainHttp(Connection *conn);
+    void handleDirectTls(Connection *conn, const QString &host);
+    static QString extractSniFromClientHello(const QByteArray &data);
     void onMitmCaptured(const QByteArray &requestData, const QByteArray &responseData,
                         const QString &host, quint16 port, qint64 durationMs);
     void cleanup(Connection *conn);

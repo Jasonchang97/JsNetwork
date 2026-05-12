@@ -1,0 +1,3 @@
+LIBRARY jsnetwork_lsp
+EXPORTS
+    WSPStartup

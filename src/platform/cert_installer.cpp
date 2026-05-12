@@ -147,15 +147,32 @@ bool CertInstaller::isInstalledMac() const
 bool CertInstaller::installWin(const QString &certPath)
 {
 #ifdef Q_OS_WIN
-    QProcess proc;
-    proc.start("certutil", {"-addstore", "Root", certPath});
-    proc.waitForFinished(30000);
+    // Use PowerShell Start-Process with RunAs verb to trigger UAC prompt
+    QString cmd = QString(
+        "Start-Process -FilePath 'certutil' -ArgumentList '-addstore','Root','%1' -Verb RunAs -Wait"
+    ).arg(certPath);
 
-    if (proc.exitCode() != 0) {
-        m_lastError = QString::fromUtf8(proc.readAllStandardError());
-        return false;
+    QProcess proc;
+    proc.start("powershell", {"-Command", cmd});
+    proc.waitForFinished(60000);
+
+    // Verify installation
+    if (isInstalledWin()) {
+        return true;
     }
-    return true;
+
+    // Fallback: try without elevation (may work if already running as admin)
+    QProcess proc2;
+    proc2.start("certutil", {"-addstore", "Root", certPath});
+    proc2.waitForFinished(30000);
+
+    if (proc2.exitCode() == 0) {
+        return true;
+    }
+
+    m_lastError = "Failed to install CA certificate. Please run as administrator or install manually:\n"
+                  "certutil -addstore Root \"" + certPath + "\"";
+    return false;
 #else
     Q_UNUSED(certPath);
     return false;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <QObject>
 #include <memory>
@@ -12,6 +12,7 @@ class Theme;
 class TrafficStorage;
 class HarExporter;
 class ProxyConfig;
+class PacketCapture;
 
 class Application : public QObject
 {
@@ -21,9 +22,13 @@ public:
     ~Application();
 
     void start();
+    void setAutoEnableMitm(bool enable) { m_autoEnableMitm = enable; }
 
 private:
     void initCertificate();
+    void checkPreviousCrashLsp();
+    void installLspIfNeeded();
+    static bool isRunningAsAdmin();
 
     std::unique_ptr<ProxyServer> m_proxyServer;
     std::unique_ptr<CertManager> m_certManager;
@@ -33,4 +38,9 @@ private:
     std::unique_ptr<TrafficStorage> m_storage;
     std::unique_ptr<HarExporter> m_harExporter;
     std::unique_ptr<MainWindow> m_mainWindow;
+    std::unique_ptr<PacketCapture> m_packetCapture;
+    bool m_autoEnableMitm = false;
+#ifdef Q_OS_WIN
+    void *m_proxyActiveEvent = nullptr;
+#endif
 };

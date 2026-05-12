@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.14)
+﻿cmake_minimum_required(VERSION 3.14)
 project(JsNetwork VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -7,15 +7,30 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Qt5 path from vcpkg
-set(QT5_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase")
+# Platform-specific paths
+if(WIN32)
+    # MSVC UTF-8 source encoding
+    if(MSVC)
+        add_compile_options(/utf-8)
+        add_compile_definitions(_CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
+    endif()
+
+    # Windows paths
+    set(QT5_DIR "D:/master/debug/xwares/3rd/qt5/build_x86/qtbase")
+    set(VCPKG_LIB_DIR "D:/master/debug/xwares/3rd/default/x86-windows")
+    set(OPENSSL_STATIC_DIR "D:/master/debug/xwares/3rd/static/x86-windows-static")
+    set(OPENSSL_DIR "${OPENSSL_STATIC_DIR}")
+    set(NPCAP_SDK_DIR "D:/npcap-sdk")
+else()
+    # macOS paths
+    set(QT5_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase")
+    set(OPENSSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic")
+    set(VCPKG_LIB_DIR "${OPENSSL_DIR}")
+endif()
+
 set(CMAKE_PREFIX_PATH "${QT5_DIR}")
 
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
-
-# Third-party paths
-set(OPENSSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic")
-set(VCPKG_LIB_DIR "${OPENSSL_DIR}")
 
 set(SOURCES
     src/main.cpp
@@ -42,6 +57,7 @@ set(SOURCES
     src/ui/theme.cpp
     src/platform/proxy_config.cpp
     src/platform/cert_installer.cpp
+    src/core/packet_capture.cpp
 )
 
 set(HEADERS
@@ -68,6 +84,7 @@ set(HEADERS
     src/ui/theme.h
     src/platform/proxy_config.h
     src/platform/cert_installer.h
+    src/core/packet_capture.h
 )
 
 # App icon (macOS)
@@ -83,36 +100,77 @@ if(APPLE)
     endif()
 endif()
 
-add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCES} ${HEADERS} ${ICON_RESOURCE})
+# Windows app icon
+if(WIN32)
+    set(APP_ICON_RC "${CMAKE_CURRENT_SOURCE_DIR}/resources/app.rc")
+    if(EXISTS "${APP_ICON_RC}")
+        list(APPEND SOURCES ${APP_ICON_RC})
+    endif()
+endif()
 
-set_target_properties(${PROJECT_NAME} PROPERTIES
-    MACOSX_BUNDLE_BUNDLE_NAME "JsNetwork"
-    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "com.jsnetwork.app"
-    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist.in"
-)
+# Platform-specific executable
+if(APPLE)
+    add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCES} ${HEADERS} ${ICON_RESOURCE})
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE_BUNDLE_NAME "JsNetwork"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.jsnetwork.app"
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/resources/Info.plist.in"
+    )
+elseif(WIN32)
+    add_executable(${PROJECT_NAME} WIN32 ${SOURCES} ${HEADERS})
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${QT5_DIR}/include
+    ${OPENSSL_DIR}/include
     ${VCPKG_LIB_DIR}/include
 )
 
+if(WIN32 AND DEFINED NPCAP_SDK_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Include)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Lib)
+endif()
+
 target_link_directories(${PROJECT_NAME} PRIVATE
+    ${OPENSSL_DIR}/lib
     ${VCPKG_LIB_DIR}/lib
 )
 
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    Qt5::Core
-    Qt5::Gui
-    Qt5::Widgets
-    Qt5::Network
-    Qt5::Sql
-    ssl
-    crypto
-    z
-)
+if(WIN32)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${QT5_DIR}/lib)
+    # Static OpenSSL - no DLLs needed, no applink.c needed
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        Qt5::Core
+        Qt5::Gui
+        Qt5::Widgets
+        Qt5::Network
+        Qt5::Sql
+        libssl
+        libcrypto
+        ws2_32
+        crypt32
+        gdi32
+        user32
+        zlib
+        wpcap
+        Packet
+        wininet
+    )
+else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE
+        Qt5::Core
+        Qt5::Gui
+        Qt5::Widgets
+        Qt5::Network
+        Qt5::Sql
+        ssl
+        crypto
+        z
+    )
+endif()
 
 # macOS specific
 if(APPLE)
@@ -147,6 +205,36 @@ if(APPLE)
     )
 endif()
 
+# Windows post-build: copy Qt DLLs and Npcap DLLs
+if(WIN32)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT5_DIR}/bin/Qt5CoreKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT5_DIR}/bin/Qt5GuiKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT5_DIR}/bin/Qt5WidgetsKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT5_DIR}/bin/Qt5NetworkKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT5_DIR}/bin/Qt5SqlKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT5_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
+        COMMENT "Copying Qt DLLs"
+    )
+    # Copy Npcap DLLs (32-bit from SysWOW64)
+    if(EXISTS "C:/Windows/SysWOW64/Npcap/wpcap.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "C:/Windows/SysWOW64/Npcap/wpcap.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "C:/Windows/SysWOW64/Npcap/Packet.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMENT "Copying Npcap DLLs"
+        )
+    endif()
+endif()
+
 # ===== Tests =====
 option(BUILD_TESTS "Build unit tests" ON)
 
@@ -179,14 +267,23 @@ if(BUILD_TESTS)
         ${VCPKG_LIB_DIR}/lib
     )
 
+    if(WIN32)
+        target_link_directories(jsnetwork_tests PRIVATE ${QT5_DIR}/lib)
+    endif()
+
     target_link_libraries(jsnetwork_tests PRIVATE
         Qt5::Core
         Qt5::Gui
         Qt5::Widgets
         GTest::gtest
         GTest::gtest_main
-        z
     )
+
+    if(APPLE)
+        target_link_libraries(jsnetwork_tests PRIVATE z)
+    elseif(WIN32)
+        target_link_libraries(jsnetwork_tests PRIVATE zlib)
+    endif()
 
     add_test(NAME JsNetworkTests COMMAND jsnetwork_tests)
 endif()
@@ -196,6 +293,41 @@ if(APPLE)
     install(TARGETS ${PROJECT_NAME} BUNDLE DESTINATION .)
 elseif(WIN32)
     install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources/" DESTINATION bin/resources)
+endif()
+
+# ===== LSP Provider (Winsock Layered Service Provider) =====
+if(WIN32)
+    # LSP DLL - injected into all processes via Winsock catalog
+    add_library(jsnetwork_lsp SHARED
+        src/injector/lsp_provider.cpp
+        src/injector/lsp_provider.h
+        src/injector/jsnetwork_lsp.def
+    )
+    target_link_libraries(jsnetwork_lsp PRIVATE ws2_32)
+    target_include_directories(jsnetwork_lsp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    set_target_properties(jsnetwork_lsp PROPERTIES
+        OUTPUT_NAME "jsnetwork_lsp"
+        # No Qt dependency - plain Win32 DLL
+    )
+
+    # LSP Installer/Uninstaller
+    add_executable(lsp_installer
+        src/injector/lsp_installer.cpp
+    )
+    target_link_libraries(lsp_installer PRIVATE ws2_32)
+    set_target_properties(lsp_installer PROPERTIES
+        OUTPUT_NAME "lsp_installer"
+    )
+
+    # Copy LSP DLL and installer to main app output directory
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:jsnetwork_lsp> "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:lsp_installer> "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        COMMENT "Copying LSP DLL and installer to output"
+    )
 endif()
 
 # ===== Packaging =====

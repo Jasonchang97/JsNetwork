@@ -1,19 +1,30 @@
-#include "mitm_engine.h"
+﻿#include "mitm_engine.h"
 #include "cert_manager.h"
+#include "compat.h"
 #include <QDebug>
 #include <QTimer>
 #include <QDateTime>
+#include <QStandardPaths>
+#include <QFile>
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
 #include <QThread>
-#include <unistd.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
 #include <cstring>
-#include <fcntl.h>
+
+static WinsockInit winsockInit2;
+
+static void logMsg(const QString &msg) {
+    QString path = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/debug.log";
+    QFile f(path);
+    if (f.open(QIODevice::Append | QIODevice::Text)) {
+        f.write(QDateTime::currentDateTime().toString("hh:mm:ss.zzz").toUtf8());
+        f.write(" ");
+        f.write(msg.toUtf8());
+        f.write("\n");
+    }
+}
 
 // ============================================================================
 // ServerHandshakeThread - server TLS handshake in background thread
@@ -24,18 +35,18 @@ class ServerHandshakeThread : public QThread {
 public:
     ServerHandshakeThread(const QString &host, quint16 port, QObject *parent = nullptr)
         : QThread(parent), m_host(host), m_port(port) {
-        pipe(m_wakePipe);
+        PIPE(m_wakePipe);
     }
     ~ServerHandshakeThread() {
         // Interrupt select() so the thread can exit
         char c = 1;
-        write(m_wakePipe[1], &c, 1);
+        WRITE(m_wakePipe[1], &c, 1);
         wait(15000); // Wait up to 15s for thread to finish
-        ::close(m_wakePipe[0]);
-        ::close(m_wakePipe[1]);
+        CLOSE(m_wakePipe[0]);
+        CLOSE(m_wakePipe[1]);
         // Close server fd if thread left it open
         if (m_serverFd >= 0) {
-            ::close(m_serverFd);
+            CLOSE(m_serverFd);
             m_serverFd = -1;
         }
     }
@@ -49,11 +60,11 @@ public:
         addr.sin_family = AF_INET;
         addr.sin_port = htons(m_port);
         struct hostent *he = gethostbyname(m_host.toLatin1().data());
-        if (!he) { ::close(m_serverFd); m_serverFd = -1; return; }
+        if (!he) { CLOSE(m_serverFd); m_serverFd = -1; return; }
         memcpy(&addr.sin_addr, he->h_addr, he->h_length);
 
         if (::connect(m_serverFd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-            ::close(m_serverFd); m_serverFd = -1; return;
+            CLOSE(m_serverFd); m_serverFd = -1; return;
         }
 
         m_ctx = SSL_CTX_new(TLS_method());
@@ -151,6 +162,10 @@ MitmConnection::~MitmConnection()
 void MitmConnection::start()
 {
     m_startTime = QDateTime::currentMSecsSinceEpoch();
+    logMsg(QString("MITM start: %1:%2 clientBytesAvail=%3 clientState=%4")
+           .arg(m_targetHost).arg(m_targetPort)
+           .arg(m_clientSocket->bytesAvailable())
+           .arg((int)m_clientSocket->state()));
 
     // Detect when browser closes the connection
     connect(m_clientSocket, &QTcpSocket::disconnected, this, [this]() {
@@ -161,13 +176,13 @@ void MitmConnection::start()
     auto *serverThread = new ServerHandshakeThread(m_targetHost, m_targetPort);
     connect(serverThread, &QThread::finished, this, [this, serverThread]() {
         if (!serverThread->m_ok) {
-            qDebug() << "MITM: server TLS failed for" << m_targetHost;
+            logMsg("MITM: server TLS FAILED for " + m_targetHost);
             serverThread->deleteLater();
             cleanup();
             return;
         }
 
-        qDebug() << "MITM: server TLS OK for" << m_targetHost;
+        logMsg("MITM: server TLS OK for " + m_targetHost);
         m_serverSsl = serverThread->m_ssl;
         m_serverCtx = serverThread->m_ctx;
         m_serverFd = serverThread->m_serverFd;
@@ -177,8 +192,13 @@ void MitmConnection::start()
         serverThread->deleteLater();
 
         // Make server socket non-blocking for event-loop relay
+#ifdef Q_OS_WIN
+        u_long mode = 1;
+        ioctlsocket(m_serverFd, FIONBIO, &mode);
+#else
         int sflags = fcntl(m_serverFd, F_GETFL, 0);
         fcntl(m_serverFd, F_SETFL, sflags | O_NONBLOCK);
+#endif
 
         // Generate domain cert in background thread (RSA key gen ~30-200ms)
         auto *certThread = new CertGenThread(m_targetHost, m_certMgr);
@@ -187,12 +207,12 @@ void MitmConnection::start()
             certThread->deleteLater();
 
             if (!clientCtx) {
-                qDebug() << "MITM: cert gen failed for" << m_targetHost;
+                logMsg("MITM: cert gen FAILED for " + m_targetHost);
                 cleanup();
                 return;
             }
 
-            qDebug() << "MITM: cert OK for" << m_targetHost;
+            logMsg("MITM: cert OK for " + m_targetHost);
 
             // Set up client SSL with memory BIOs
             m_clientSsl = SSL_new(clientCtx);
@@ -206,7 +226,7 @@ void MitmConnection::start()
             // Timeout: if client handshake doesn't complete in 30s, give up
             QTimer::singleShot(30000, this, [this]() {
                 if (m_state == ClientHandshake) {
-                    qDebug() << "MITM: client handshake timeout for" << m_targetHost;
+                    logMsg("MITM: client handshake TIMEOUT for " + m_targetHost);
                     cleanup();
                 }
             });
@@ -229,7 +249,7 @@ void MitmConnection::doClientHandshake()
     while (true) {
         int ret = SSL_do_handshake(m_clientSsl);
         if (ret == 1) {
-            qDebug() << "MITM: client TLS OK for" << m_targetHost;
+            logMsg("MITM: client TLS OK for " + m_targetHost);
             // Flush any remaining output
             flushClientWriteBIO();
             m_state = Relaying;
@@ -391,34 +411,39 @@ bool MitmConnection::isResponseComplete() const
 
     // Check chunked transfer encoding
     if (headers.contains("transfer-encoding:") && headers.contains("chunked")) {
-        // Look for terminating chunk: "0\r\n\r\n"
-        return m_responseBuffer.contains("0\r\n\r\n");
+        // Look for terminating chunk: "\r\n0\r\n" followed by optional trailers and final "\r\n"
+        QByteArray body = m_responseBuffer.mid(bodyStart);
+        int termIdx = body.indexOf("\r\n0\r\n");
+        if (termIdx >= 0) {
+            // Found "0" chunk, check for trailing \r\n\r\n after it
+            int afterZero = termIdx + 5; // past "\r\n0\r\n"
+            int trailEnd = body.indexOf("\r\n", afterZero);
+            return trailEnd >= 0;
+        }
+        // Also handle case where body starts with "0\r\n" (empty chunked body)
+        if (body.startsWith("0\r\n\r\n") || body.startsWith("0\r\n")) {
+            return body.indexOf("\r\n\r\n") >= 0;
+        }
+        return false;
     }
 
-    // No Content-Length and not chunked: assume complete after headers + some body
-    // (common for simple responses)
-    return bodySize > 0;
+    // No Content-Length and not chunked: wait for connection close
+    return false;
 }
 
 void MitmConnection::emitCapturedAndReset()
 {
     if (m_requestBuffer.isEmpty()) return;
 
-    // Debug: log first 200 bytes of request to diagnose parsing issues
-    qDebug() << "MITM: captured" << m_targetHost
-             << "req=" << m_requestBuffer.size()
-             << "resp=" << m_responseBuffer.size();
-    qDebug() << "  REQ_HEAD:" << m_requestBuffer.left(200);
-    if (m_responseBuffer.size() > 0) {
-        qDebug() << "  RESP_HEAD:" << m_responseBuffer.left(200);
-    }
+    logMsg(QString("MITM: captured %1 req=%2 resp=%3")
+           .arg(m_targetHost).arg(m_requestBuffer.size()).arg(m_responseBuffer.size()));
 
     qint64 duration = QDateTime::currentMSecsSinceEpoch() - m_startTime;
     emit requestCaptured(m_requestBuffer, m_responseBuffer, m_targetHost, m_targetPort, duration);
 
     m_requestBuffer.clear();
     m_responseBuffer.clear();
-    m_pendingServerWrite.clear();
+    // Don't clear m_pendingServerWrite - it may contain data not yet flushed to server
 }
 
 void MitmConnection::onServerReadyRead()
@@ -435,15 +460,29 @@ void MitmConnection::onServerReadyRead()
 
     char plainBuf[16384];
     int n;
+    bool serverClosed = false;
     while ((n = SSL_read(m_serverSsl, plainBuf, sizeof(plainBuf))) > 0) {
         m_responseBuffer.append(plainBuf, n);
         SSL_write(m_clientSsl, plainBuf, n);
         flushClientWriteBIO();
     }
 
+    if (n <= 0) {
+        int err = SSL_get_error(m_serverSsl, n);
+        if (err == SSL_ERROR_ZERO_RETURN || err == SSL_ERROR_SYSCALL ||
+            err == SSL_ERROR_SSL) {
+            serverClosed = true;
+        }
+    }
+
     // Check if HTTP response is complete - emit immediately instead of waiting for connection close
     if (isResponseComplete()) {
         emitCapturedAndReset();
+    } else if (serverClosed && !m_responseBuffer.isEmpty()) {
+        // Server closed connection - treat accumulated data as complete response
+        // (common for HTTP/1.0 or responses without Content-Length)
+        emitCapturedAndReset();
+        cleanup();
     }
 }
 
@@ -452,11 +491,13 @@ void MitmConnection::onServerConnected() {}
 void MitmConnection::cleanup()
 {
     if (m_state == Done) return;
-    m_state = Done;
 
-    qDebug() << "MITM: cleanup" << m_targetHost
-             << "req=" << m_requestBuffer.size()
-             << "resp=" << m_responseBuffer.size();
+    logMsg(QString("MITM: cleanup %1 state=%2 req=%3 resp=%4 serverSsl=%5 clientSsl=%6")
+           .arg(m_targetHost).arg((int)m_state)
+           .arg(m_requestBuffer.size()).arg(m_responseBuffer.size())
+           .arg(m_serverSsl != nullptr).arg(m_clientSsl != nullptr));
+
+    m_state = Done;
 
     if (m_clientSsl) {
         SSL_shutdown(m_clientSsl);
@@ -476,7 +517,7 @@ void MitmConnection::cleanup()
     }
     // Close server fd (thread's copy was set to -1 after transfer)
     if (m_serverFd >= 0) {
-        ::close(m_serverFd);
+        CLOSE(m_serverFd);
         m_serverFd = -1;
     }
 
