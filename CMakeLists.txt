@@ -169,6 +169,7 @@ else()
         ssl
         crypto
         z
+        pcap
     )
 endif()
 
