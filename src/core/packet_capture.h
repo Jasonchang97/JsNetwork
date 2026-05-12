@@ -12,9 +12,7 @@
 #include <winsock2.h>
 #endif
 
-// Forward declarations for pcap types
-typedef struct pcap pcap_t;
-struct pcap_pkthdr;
+#include <pcap/pcap.h>
 
 // TCP stream reassembly buffer
 struct TcpStream {

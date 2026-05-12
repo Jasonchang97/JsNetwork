@@ -47,8 +47,12 @@ install_name_tool -change \
     "@executable_path/../Frameworks/libcrypto.1.1.dylib" \
     "$APP_BUNDLE/Contents/MacOS/$APP_NAME" 2>/dev/null || true
 
-# Step 5: Create DMG with Applications symlink
-echo "[5/5] Creating DMG..."
+# Step 5: Ad-hoc code signing (fixes invalid framework signatures from macdeployqt)
+echo "[5/6] Code signing..."
+codesign --force --deep --sign - "$APP_BUNDLE" 2>&1
+
+# Step 6: Create DMG with Applications symlink
+echo "[6/6] Creating DMG..."
 DMG_NAME="$APP_NAME-$VERSION-macOS.dmg"
 rm -f "$BUILD_DIR/$DMG_NAME"
 

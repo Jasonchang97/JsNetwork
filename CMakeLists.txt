@@ -23,9 +23,11 @@ if(WIN32)
     set(NPCAP_SDK_DIR "D:/npcap-sdk")
 else()
     # macOS paths
-    set(QT5_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase")
-    set(OPENSSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic")
+    set(QT5_DIR "/Users/test/code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase")
+    set(OPENSSL_DIR "/Users/test/code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic")
     set(VCPKG_LIB_DIR "${OPENSSL_DIR}")
+    # pcap from Homebrew
+    set(PCAP_DIR "/opt/homebrew/opt/libpcap")
 endif()
 
 set(CMAKE_PREFIX_PATH "${QT5_DIR}")
@@ -132,6 +134,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 if(WIN32 AND DEFINED NPCAP_SDK_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Include)
     target_link_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Lib)
+endif()
+
+if(APPLE AND DEFINED PCAP_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${PCAP_DIR}/include)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${PCAP_DIR}/lib)
 endif()
 
 target_link_directories(${PROJECT_NAME} PRIVATE

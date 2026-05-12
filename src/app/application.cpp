@@ -18,6 +18,7 @@
 #include <QDebug>
 #include <QTimer>
 #include <QProcess>
+#include <unistd.h>
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
