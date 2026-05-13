@@ -282,24 +282,31 @@ void Application::initCertificate()
         return;
     }
 
-    logMsg(QString("CA cert path: %1").arg(m_certManager->caCertPath()));
+    QString certPath = m_certManager->caCertPath();
+    logMsg(QString("CA cert path: %1").arg(certPath));
 
     if (!m_certInstaller->isInstalled()) {
-        logMsg("CA certificate not in system trust store - installing...");
-        qInfo() << "CA certificate not installed in system trust store.";
+        logMsg("CA certificate not in keychain - installing...");
 
-        if (m_certInstaller->installCaCert(m_certManager->caCertPath())) {
-            logMsg("CA certificate installed successfully");
-            qInfo() << "CA certificate installed successfully";
+        if (!QFile::exists(certPath)) {
+            logMsg("ERROR: CA cert file missing at: " + certPath);
+            return;
+        }
+
+        if (m_certInstaller->installCaCert(certPath)) {
+            // Verify installation actually took effect
+            if (m_certInstaller->isInstalled()) {
+                logMsg("CA certificate installed and verified in keychain");
+            } else {
+                logMsg("WARNING: install returned success but cert not found in keychain");
+            }
         } else {
             QString err = m_certInstaller->lastError();
             logMsg("WARNING: CA cert install failed: " + err);
             logMsg("HTTPS decryption will not work until certificate is trusted");
-            qWarning() << "Failed to install CA certificate:" << err;
         }
     } else {
-        logMsg("CA certificate already installed in trust store");
-        qInfo() << "CA certificate already installed";
+        logMsg("CA certificate already in keychain");
     }
 }
 

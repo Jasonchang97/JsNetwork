@@ -3,19 +3,31 @@
 #include <QDir>
 #include <QDebug>
 #include <QThread>
+#include <QFile>
 
 #ifdef Q_OS_MAC
 // Refresh macOS trust cache so newly installed certs take effect immediately.
-// trustd is managed by launchd and will auto-restart.
+// Kill trustd + syspolicyd to force full reload.
 static void refreshTrustCache()
 {
-    qInfo() << "Refreshing macOS trust cache (killall trustd)...";
+    qInfo() << "Refreshing macOS trust cache...";
     QProcess proc;
     proc.start("killall", {"trustd"});
     proc.waitForFinished(5000);
-    // Give trustd time to restart and reload trust settings
+    QThread::msleep(500);
+    proc.start("killall", {"syspolicyd"});
+    proc.waitForFinished(5000);
     QThread::msleep(1000);
     qInfo() << "Trust cache refreshed";
+}
+
+// Check if cert is in a specific keychain
+static bool certInKeychain(const QString &cn, const QString &keychainPath)
+{
+    QProcess proc;
+    proc.start("security", {"find-certificate", "-c", cn, keychainPath});
+    proc.waitForFinished(10000);
+    return !proc.readAllStandardOutput().isEmpty();
 }
 #endif
 
@@ -69,78 +81,100 @@ QString CertInstaller::lastError() const
 
 bool CertInstaller::installMac(const QString &certPath)
 {
-    // Method 1: Direct security command (triggers macOS GUI password dialog)
-    QProcess proc;
-    proc.start("security", {
-        "add-trusted-cert",
-        "-d",
-        "-r", "trustRoot",
-        "-k", "/Library/Keychains/System.keychain",
-        certPath
-    });
-    proc.waitForFinished(30000);
-
-    if (proc.exitCode() == 0) {
-        qInfo() << "CA cert installed to System keychain";
-        refreshTrustCache();
-        return true;
+    if (!QFile::exists(certPath)) {
+        m_lastError = "Certificate file not found: " + certPath;
+        qWarning() << m_lastError;
+        return false;
     }
 
-    QString err1 = QString::fromUtf8(proc.readAllStandardError());
-    qWarning() << "System keychain install failed:" << err1;
+    qInfo() << "Installing CA cert:" << certPath;
 
-    // Method 2: Use osascript to request admin and run via sudo
-    QString script = QString(
-        "do shell script \"security add-trusted-cert -d -r trustRoot "
-        "-k /Library/Keychains/System.keychain '%1'\" with administrator privileges"
-    ).arg(certPath);
+    // Method 1: Direct security command
+    {
+        QProcess proc;
+        proc.start("security", {
+            "add-trusted-cert", "-d",
+            "-r", "trustRoot",
+            "-k", "/Library/Keychains/System.keychain",
+            certPath
+        });
+        proc.waitForFinished(30000);
 
-    QProcess proc2;
-    proc2.start("osascript", {"-e", script});
-    proc2.waitForFinished(60000);
-
-    if (proc2.exitCode() == 0) {
-        qInfo() << "CA cert installed via osascript admin prompt";
-        refreshTrustCache();
-        return true;
+        QString stderr = QString::fromUtf8(proc.readAllStandardError());
+        if (proc.exitCode() == 0) {
+            qInfo() << "Method 1: installed to System keychain";
+            refreshTrustCache();
+            if (certInKeychain(CA_CN, "/Library/Keychains/System.keychain")) {
+                qInfo() << "Verification: cert found in System keychain";
+                return true;
+            }
+            qWarning() << "Method 1: install reported success but cert not found after verification";
+        } else {
+            qWarning() << "Method 1 failed:" << stderr.trimmed();
+        }
     }
 
-    QString err2 = QString::fromUtf8(proc2.readAllStandardError());
-    qWarning() << "osascript install failed:" << err2;
+    // Method 2: osascript admin prompt
+    {
+        QString script = QString(
+            "do shell script \"security add-trusted-cert -d -r trustRoot "
+            "-k /Library/Keychains/System.keychain '%1'\" with administrator privileges"
+        ).arg(certPath);
 
-    // Method 3: Fallback to Login keychain (no admin needed, but only current user)
-    QProcess proc3;
-    proc3.start("security", {
-        "add-trusted-cert",
-        "-d",
-        "-r", "trustRoot",
-        "-k", QDir::homePath() + "/Library/Keychains/login.keychain-db",
-        certPath
-    });
-    proc3.waitForFinished(30000);
+        QProcess proc;
+        proc.start("osascript", {"-e", script});
+        proc.waitForFinished(60000);
 
-    if (proc3.exitCode() == 0) {
-        qInfo() << "CA cert installed to Login keychain (user-only)";
-        refreshTrustCache();
-        return true;
+        QString stderr = QString::fromUtf8(proc.readAllStandardError());
+        if (proc.exitCode() == 0) {
+            qInfo() << "Method 2: installed via osascript";
+            refreshTrustCache();
+            if (certInKeychain(CA_CN, "/Library/Keychains/System.keychain")) {
+                qInfo() << "Verification: cert found in System keychain";
+                return true;
+            }
+            qWarning() << "Method 2: install reported success but cert not found after verification";
+        } else {
+            qWarning() << "Method 2 failed:" << stderr.trimmed();
+        }
     }
 
-    m_lastError = QString("All installation methods failed.\n"
-                          "System keychain: %1\nosascript: %2\n"
-                          "Please install manually: security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db \"%3\"")
-                  .arg(err1, err2, certPath);
+    // Method 3: Login keychain fallback (no admin needed)
+    {
+        QString loginKeychain = QDir::homePath() + "/Library/Keychains/login.keychain-db";
+        QProcess proc;
+        proc.start("security", {
+            "add-trusted-cert", "-d",
+            "-r", "trustRoot",
+            "-k", loginKeychain,
+            certPath
+        });
+        proc.waitForFinished(30000);
+
+        QString stderr = QString::fromUtf8(proc.readAllStandardError());
+        if (proc.exitCode() == 0) {
+            qInfo() << "Method 3: installed to Login keychain";
+            refreshTrustCache();
+            if (certInKeychain(CA_CN, loginKeychain)) {
+                qInfo() << "Verification: cert found in Login keychain";
+                return true;
+            }
+            qWarning() << "Method 3: install reported success but cert not found after verification";
+        } else {
+            qWarning() << "Method 3 failed:" << stderr.trimmed();
+        }
+    }
+
+    m_lastError = "All installation methods failed. Please install manually.";
     qWarning() << m_lastError;
     return false;
 }
 
 bool CertInstaller::uninstallMac()
 {
-    // Find and remove our CA cert from keychain
     QProcess proc;
     proc.start("security", {
-        "find-certificate",
-        "-c", CA_CN,
-        "-Z",
+        "find-certificate", "-c", CA_CN, "-Z",
         "/Library/Keychains/System.keychain"
     });
     proc.waitForFinished(10000);
@@ -151,7 +185,6 @@ bool CertInstaller::uninstallMac()
         return false;
     }
 
-    // Extract SHA-256 hash (look for "SHA-256 hash:" line)
     QString hash;
     for (const QString &line : output.split('\n')) {
         if (line.contains("SHA-256 hash:")) {
@@ -165,10 +198,8 @@ bool CertInstaller::uninstallMac()
         return false;
     }
 
-    // Delete by hash
     proc.start("security", {
-        "delete-certificate",
-        "-Z", hash,
+        "delete-certificate", "-Z", hash,
         "/Library/Keychains/System.keychain"
     });
     proc.waitForFinished(10000);
@@ -182,24 +213,11 @@ bool CertInstaller::uninstallMac()
 
 bool CertInstaller::isInstalledMac() const
 {
-    // Check both System and Login keychains
-    QProcess proc;
-    proc.start("security", {
-        "find-certificate",
-        "-c", CA_CN,
-        "/Library/Keychains/System.keychain"
-    });
-    proc.waitForFinished(10000);
-    if (!proc.readAllStandardOutput().isEmpty()) return true;
-
-    proc.start("security", {
-        "find-certificate",
-        "-c", CA_CN,
-        QString("%1/Library/Keychains/login.keychain-db")
-            .arg(QDir::homePath())
-    });
-    proc.waitForFinished(10000);
-    return !proc.readAllStandardOutput().isEmpty();
+    if (certInKeychain(CA_CN, "/Library/Keychains/System.keychain"))
+        return true;
+    if (certInKeychain(CA_CN, QDir::homePath() + "/Library/Keychains/login.keychain-db"))
+        return true;
+    return false;
 }
 
 // ============================================================================
