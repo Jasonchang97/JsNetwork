@@ -2,6 +2,22 @@
 #include <QProcess>
 #include <QDir>
 #include <QDebug>
+#include <QThread>
+
+#ifdef Q_OS_MAC
+// Refresh macOS trust cache so newly installed certs take effect immediately.
+// trustd is managed by launchd and will auto-restart.
+static void refreshTrustCache()
+{
+    qInfo() << "Refreshing macOS trust cache (killall trustd)...";
+    QProcess proc;
+    proc.start("killall", {"trustd"});
+    proc.waitForFinished(5000);
+    // Give trustd time to restart and reload trust settings
+    QThread::msleep(1000);
+    qInfo() << "Trust cache refreshed";
+}
+#endif
 
 CertInstaller::CertInstaller(QObject *parent)
     : QObject(parent)
@@ -66,6 +82,7 @@ bool CertInstaller::installMac(const QString &certPath)
 
     if (proc.exitCode() == 0) {
         qInfo() << "CA cert installed to System keychain";
+        refreshTrustCache();
         return true;
     }
 
@@ -84,6 +101,7 @@ bool CertInstaller::installMac(const QString &certPath)
 
     if (proc2.exitCode() == 0) {
         qInfo() << "CA cert installed via osascript admin prompt";
+        refreshTrustCache();
         return true;
     }
 
@@ -103,6 +121,7 @@ bool CertInstaller::installMac(const QString &certPath)
 
     if (proc3.exitCode() == 0) {
         qInfo() << "CA cert installed to Login keychain (user-only)";
+        refreshTrustCache();
         return true;
     }
 
