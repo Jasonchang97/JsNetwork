@@ -5,6 +5,7 @@
 #include "composerwidget.h"
 #include "theme.h"
 #include "app/translator.h"
+#include "app/version.h"
 #include "core/mock_engine.h"
 #include "core/traffic_storage.h"
 #include "core/har_exporter.h"
@@ -175,10 +176,13 @@ void MainWindow::setupStatusBar()
     m_statusLabel = new QLabel(this);
     m_mitmLabel = new QLabel(this);
     m_captureLabel = new QLabel(this);
+    m_versionLabel = new QLabel(this);
+    m_versionLabel->setText(QString("v%1").arg(JSNETWORK_VERSION));
 
     statusBar()->addWidget(m_statusLabel);
     statusBar()->addPermanentWidget(m_captureLabel);
     statusBar()->addPermanentWidget(m_mitmLabel);
+    statusBar()->addPermanentWidget(m_versionLabel);
 }
 
 void MainWindow::retranslateUi()

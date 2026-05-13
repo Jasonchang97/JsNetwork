@@ -6,7 +6,7 @@ BUILD_DIR="$SCRIPT_DIR/build"
 QT_DIR="/Users/test/code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase"
 OPENSSL_DIR="/Users/test/code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic"
 APP_NAME="JsNetwork"
-VERSION="0.1.0"
+VERSION="1.0.1"
 
 echo "=== Building JsNetwork DMG ==="
 

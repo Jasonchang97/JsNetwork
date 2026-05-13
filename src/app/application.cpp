@@ -1,4 +1,5 @@
 #include "application.h"
+#include "version.h"
 #include "ui/mainwindow.h"
 #include "ui/theme.h"
 #include "core/proxy_server.h"
@@ -216,6 +217,8 @@ void Application::checkPreviousCrashLsp()
 
 void Application::start()
 {
+    logMsg(QString("=== JsNetwork v%1 starting ===").arg(JSNETWORK_VERSION));
+
     // Clean up any stale proxy settings from previous crash
     checkPreviousCrashLsp();
 

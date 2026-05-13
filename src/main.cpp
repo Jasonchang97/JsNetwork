@@ -1,4 +1,5 @@
 ﻿#include "app/application.h"
+#include "app/version.h"
 #include <QApplication>
 #include <QCoreApplication>
 #include <csignal>
@@ -72,7 +73,7 @@ int main(int argc, char *argv[])
 
     QApplication app(argc, argv);
     app.setApplicationName("JsNetwork");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion(JSNETWORK_VERSION);
     app.setOrganizationName("JsNetwork");
 
     Application jsn;
