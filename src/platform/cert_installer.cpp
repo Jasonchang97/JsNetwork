@@ -79,6 +79,7 @@ QString CertInstaller::lastError() const
 // ============================================================================
 // macOS implementation
 // ============================================================================
+#ifdef Q_OS_MAC
 
 bool CertInstaller::installMac(const QString &certPath)
 {
@@ -277,6 +278,8 @@ bool CertInstaller::isInstalledMac() const
     qInfo() << "isInstalled: cert file differs from keychain (file:" << fileHash << "keychain:" << keychainHash << ")";
     return false;
 }
+
+#endif // Q_OS_MAC
 
 // ============================================================================
 // Windows implementation

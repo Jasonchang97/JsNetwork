@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.14)
 project(JsNetwork VERSION 1.0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -16,9 +16,9 @@ if(WIN32)
     endif()
 
     # Windows paths
-    set(QT5_DIR "D:/master/debug/xwares/3rd/qt5/build_x86/qtbase")
-    set(VCPKG_LIB_DIR "D:/master/debug/xwares/3rd/default/x86-windows")
-    set(OPENSSL_STATIC_DIR "D:/master/debug/xwares/3rd/static/x86-windows-static")
+    set(QT5_DIR "D:/aqua/debug/xwares/3rd/qt5/build_x86/qtbase")
+    set(VCPKG_LIB_DIR "D:/aqua/debug/xwares/3rd/default/x86-windows")
+    set(OPENSSL_STATIC_DIR "D:/aqua/debug/xwares/3rd/static/x86-windows-static")
     set(OPENSSL_DIR "${OPENSSL_STATIC_DIR}")
     set(NPCAP_SDK_DIR "D:/npcap-sdk")
 else()

@@ -1,13 +1,13 @@
 ﻿[Setup]
 AppName=JsNetwork
-AppVersion=0.1.0
+AppVersion=1.0.1
 AppPublisher=JsNetwork
 AppPublisherURL=https://github.com/jsnetwork
 DefaultDirName={autopf}\JsNetwork
 DefaultGroupName=JsNetwork
 AllowNoIcons=yes
 OutputDir=D:\JsNetwork\JsNetwork\dist
-OutputBaseFilename=JsNetwork-v0.1.0-win32-setup
+OutputBaseFilename=JsNetwork-v1.0.1-win32-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
