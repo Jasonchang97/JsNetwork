@@ -4,6 +4,7 @@
 #include <QDebug>
 #include <QThread>
 #include <QFile>
+#include <QStandardPaths>
 
 #ifdef Q_OS_MAC
 // Refresh macOS trust cache so newly installed certs take effect immediately.
@@ -213,10 +214,67 @@ bool CertInstaller::uninstallMac()
 
 bool CertInstaller::isInstalledMac() const
 {
-    if (certInKeychain(CA_CN, "/Library/Keychains/System.keychain"))
+    // Check if cert exists in keychain AND the cert file on disk matches
+    // This handles the case where user deleted cert from Keychain Access
+    // but a stale reference remains
+
+    // Step 1: Check if cert is in any keychain
+    bool inSystem = certInKeychain(CA_CN, "/Library/Keychains/System.keychain");
+    bool inLogin = certInKeychain(CA_CN, QDir::homePath() + "/Library/Keychains/login.keychain-db");
+
+    if (!inSystem && !inLogin) {
+        qInfo() << "isInstalled: cert not found in any keychain";
+        return false;
+    }
+
+    qInfo() << "isInstalled: cert found in" << (inSystem ? "System" : "") << (inLogin ? "Login" : "");
+
+    // Step 2: Verify the cert file on disk matches what's in keychain
+    // Get SHA-256 of cert in keychain
+    QString keychain = inSystem ? "/Library/Keychains/System.keychain"
+                                : QDir::homePath() + "/Library/Keychains/login.keychain-db";
+    QProcess proc;
+    proc.start("security", {"find-certificate", "-c", CA_CN, "-p", keychain});
+    proc.waitForFinished(10000);
+    QByteArray keychainPem = proc.readAllStandardOutput();
+
+    // Get SHA-256 of cert file on disk
+    QString certDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+                      + "/certificates";
+    QString caCertPath = certDir + "/ca.pem";
+    if (!QFile::exists(caCertPath)) {
+        qInfo() << "isInstalled: cert file missing on disk, need reinstall";
+        return false;
+    }
+
+    // Compare using DER format (binary) to avoid PEM formatting differences
+    QProcess shaProc;
+    shaProc.start("sh", {"-c",
+        QString("security find-certificate -c '%1' -p '%2' | openssl x509 -outform DER | openssl dgst -sha256")
+            .arg(CA_CN, keychain)
+    });
+    shaProc.waitForFinished(10000);
+    QString keychainHash = QString::fromUtf8(shaProc.readAllStandardOutput()).trimmed();
+
+    QProcess shaProc2;
+    shaProc2.start("sh", {"-c",
+        QString("openssl x509 -in '%1' -outform DER | openssl dgst -sha256").arg(caCertPath)
+    });
+    shaProc2.waitForFinished(10000);
+    QString fileHash = QString::fromUtf8(shaProc2.readAllStandardOutput()).trimmed();
+
+    if (keychainHash.isEmpty() || fileHash.isEmpty()) {
+        qWarning() << "isInstalled: could not compute cert hashes";
+        // Fall back to just checking keychain presence
+        return inSystem || inLogin;
+    }
+
+    if (keychainHash == fileHash) {
+        qInfo() << "isInstalled: cert file matches keychain";
         return true;
-    if (certInKeychain(CA_CN, QDir::homePath() + "/Library/Keychains/login.keychain-db"))
-        return true;
+    }
+
+    qInfo() << "isInstalled: cert file differs from keychain (file:" << fileHash << "keychain:" << keychainHash << ")";
     return false;
 }
 

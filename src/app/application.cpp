@@ -278,35 +278,32 @@ void Application::initCertificate()
 
     if (!m_certManager->initialize(certDir)) {
         logMsg("ERROR: Failed to initialize certificate manager");
-        qWarning() << "Failed to initialize certificate manager";
         return;
     }
 
     QString certPath = m_certManager->caCertPath();
     logMsg(QString("CA cert path: %1").arg(certPath));
 
-    if (!m_certInstaller->isInstalled()) {
-        logMsg("CA certificate not in keychain - installing...");
+    if (!QFile::exists(certPath)) {
+        logMsg("ERROR: CA cert file missing: " + certPath);
+        return;
+    }
 
-        if (!QFile::exists(certPath)) {
-            logMsg("ERROR: CA cert file missing at: " + certPath);
-            return;
-        }
+    // Always ensure cert is installed (security add-trusted-cert is idempotent)
+    if (m_certInstaller->isInstalled()) {
+        logMsg("CA cert already in keychain - verifying trust...");
+    } else {
+        logMsg("CA cert not in keychain - installing...");
+    }
 
-        if (m_certInstaller->installCaCert(certPath)) {
-            // Verify installation actually took effect
-            if (m_certInstaller->isInstalled()) {
-                logMsg("CA certificate installed and verified in keychain");
-            } else {
-                logMsg("WARNING: install returned success but cert not found in keychain");
-            }
+    if (m_certInstaller->installCaCert(certPath)) {
+        if (m_certInstaller->isInstalled()) {
+            logMsg("CA cert installed and verified");
         } else {
-            QString err = m_certInstaller->lastError();
-            logMsg("WARNING: CA cert install failed: " + err);
-            logMsg("HTTPS decryption will not work until certificate is trusted");
+            logMsg("WARNING: install returned success but cert not found in keychain");
         }
     } else {
-        logMsg("CA certificate already in keychain");
+        logMsg("WARNING: CA cert install failed: " + m_certInstaller->lastError());
     }
 }
 
