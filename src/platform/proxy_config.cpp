@@ -1,4 +1,4 @@
-﻿#include "proxy_config.h"
+#include "proxy_config.h"
 
 #ifdef Q_OS_MAC
 #include <QProcess>
@@ -19,31 +19,44 @@ static void notifyProxyChange()
 }
 #endif
 
-bool ProxyConfig::enableSystemProxy(quint16 port)
-{
 #ifdef Q_OS_MAC
+// Get all active network service names (not just Wi-Fi)
+static QStringList macNetworkServices()
+{
     QProcess proc;
     proc.start("networksetup", {"-listallnetworkservices"});
     proc.waitForFinished();
     QString output = QString::fromUtf8(proc.readAllStandardOutput());
-    QStringList services = output.split('\n', QString::SkipEmptyParts);
-
-    QString wifiService;
-    for (const QString &s : services) {
-        if (s.contains("Wi-Fi") || s.contains("AirPort")) {
-            wifiService = s.trimmed();
-            break;
-        }
+    QStringList services;
+    for (const QString &line : output.split('\n', QString::SkipEmptyParts)) {
+        QString s = line.trimmed();
+        // Skip header line ("An asterisk denotes...")
+        if (s.startsWith("*") || s.startsWith("An asterisk")) continue;
+        if (!s.isEmpty()) services.append(s);
     }
+    return services;
+}
+#endif
 
-    if (wifiService.isEmpty()) return false;
+bool ProxyConfig::enableSystemProxy(quint16 port)
+{
+#ifdef Q_OS_MAC
+    QStringList services = macNetworkServices();
+    bool anyOk = false;
 
-    proc.start("networksetup", {"-setwebproxy", wifiService, "127.0.0.1", QString::number(port)});
-    proc.waitForFinished();
-    proc.start("networksetup", {"-setsecurewebproxy", wifiService, "127.0.0.1", QString::number(port)});
-    proc.waitForFinished();
+    for (const QString &svc : services) {
+        QProcess proc;
+        proc.start("networksetup", {"-setwebproxy", svc, "127.0.0.1", QString::number(port)});
+        proc.waitForFinished();
+        bool ok1 = (proc.exitCode() == 0);
 
-    return true;
+        proc.start("networksetup", {"-setsecurewebproxy", svc, "127.0.0.1", QString::number(port)});
+        proc.waitForFinished();
+        bool ok2 = (proc.exitCode() == 0);
+
+        if (ok1 || ok2) anyOk = true;
+    }
+    return anyOk;
 #endif
 
 #ifdef Q_OS_WIN
@@ -61,7 +74,6 @@ bool ProxyConfig::enableSystemProxy(quint16 port)
     RegSetValueExA(hKey, "ProxyServer", 0, REG_SZ,
                    (const BYTE *)proxyServer, len + 1);
 
-    // Bypass list: don't proxy localhost and private networks
     const char *bypass = "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;"
                          "172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;"
                          "172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;"
@@ -80,28 +92,22 @@ bool ProxyConfig::enableSystemProxy(quint16 port)
 bool ProxyConfig::disableSystemProxy()
 {
 #ifdef Q_OS_MAC
-    QProcess proc;
-    proc.start("networksetup", {"-listallnetworkservices"});
-    proc.waitForFinished();
-    QString output = QString::fromUtf8(proc.readAllStandardOutput());
-    QStringList services = output.split('\n', QString::SkipEmptyParts);
+    QStringList services = macNetworkServices();
+    bool anyOk = false;
 
-    QString wifiService;
-    for (const QString &s : services) {
-        if (s.contains("Wi-Fi") || s.contains("AirPort")) {
-            wifiService = s.trimmed();
-            break;
-        }
+    for (const QString &svc : services) {
+        QProcess proc;
+        proc.start("networksetup", {"-setwebproxystate", svc, "off"});
+        proc.waitForFinished();
+        bool ok1 = (proc.exitCode() == 0);
+
+        proc.start("networksetup", {"-setsecurewebproxystate", svc, "off"});
+        proc.waitForFinished();
+        bool ok2 = (proc.exitCode() == 0);
+
+        if (ok1 || ok2) anyOk = true;
     }
-
-    if (wifiService.isEmpty()) return false;
-
-    proc.start("networksetup", {"-setwebproxystate", wifiService, "off"});
-    proc.waitForFinished();
-    proc.start("networksetup", {"-setsecurewebproxystate", wifiService, "off"});
-    proc.waitForFinished();
-
-    return true;
+    return anyOk;
 #endif
 
 #ifdef Q_OS_WIN
@@ -114,7 +120,6 @@ bool ProxyConfig::disableSystemProxy()
     RegSetValueExW(hKey, L"ProxyEnable", 0, REG_DWORD,
                    (const BYTE *)&enable, sizeof(enable));
 
-    // Clear ProxyServer value entirely
     RegDeleteValueA(hKey, "ProxyServer");
     RegDeleteValueA(hKey, "ProxyOverride");
 
@@ -129,25 +134,18 @@ bool ProxyConfig::disableSystemProxy()
 bool ProxyConfig::isSystemProxyEnabled()
 {
 #ifdef Q_OS_MAC
-    QProcess proc;
-    proc.start("networksetup", {"-listallnetworkservices"});
-    proc.waitForFinished();
-    QString output = QString::fromUtf8(proc.readAllStandardOutput());
-    QStringList services = output.split('\n', QString::SkipEmptyParts);
-
-    QString wifiService;
-    for (const QString &s : services) {
-        if (s.contains("Wi-Fi") || s.contains("AirPort")) {
-            wifiService = s.trimmed();
-            break;
+    // Check if any network service has proxy enabled pointing to our port
+    QStringList services = macNetworkServices();
+    for (const QString &svc : services) {
+        QProcess proc;
+        proc.start("networksetup", {"-getwebproxy", svc});
+        proc.waitForFinished();
+        QString output = QString::fromUtf8(proc.readAllStandardOutput());
+        if (output.contains("Enabled: Yes") && output.contains("127.0.0.1")) {
+            return true;
         }
     }
-    if (wifiService.isEmpty()) return false;
-
-    proc.start("networksetup", {"-getwebproxy", wifiService});
-    proc.waitForFinished();
-    QString proxyOutput = QString::fromUtf8(proc.readAllStandardOutput());
-    return proxyOutput.contains("Enabled: Yes");
+    return false;
 #endif
 
 #ifdef Q_OS_WIN

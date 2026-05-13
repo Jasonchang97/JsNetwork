@@ -1,6 +1,7 @@
 #include "cert_installer.h"
 #include <QProcess>
 #include <QDir>
+#include <QDebug>
 
 CertInstaller::CertInstaller(QObject *parent)
     : QObject(parent)
@@ -52,23 +53,65 @@ QString CertInstaller::lastError() const
 
 bool CertInstaller::installMac(const QString &certPath)
 {
-    // Use security command to add trusted cert to System keychain
-    // This requires admin privileges (will prompt for password)
+    // Method 1: Direct security command (triggers macOS GUI password dialog)
     QProcess proc;
     proc.start("security", {
         "add-trusted-cert",
-        "-d",                       // Add to admin cert store
-        "-r", "trustRoot",          // Trust as root
+        "-d",
+        "-r", "trustRoot",
         "-k", "/Library/Keychains/System.keychain",
         certPath
     });
     proc.waitForFinished(30000);
 
-    if (proc.exitCode() != 0) {
-        m_lastError = QString::fromUtf8(proc.readAllStandardError());
-        return false;
+    if (proc.exitCode() == 0) {
+        qInfo() << "CA cert installed to System keychain";
+        return true;
     }
-    return true;
+
+    QString err1 = QString::fromUtf8(proc.readAllStandardError());
+    qWarning() << "System keychain install failed:" << err1;
+
+    // Method 2: Use osascript to request admin and run via sudo
+    QString script = QString(
+        "do shell script \"security add-trusted-cert -d -r trustRoot "
+        "-k /Library/Keychains/System.keychain '%1'\" with administrator privileges"
+    ).arg(certPath);
+
+    QProcess proc2;
+    proc2.start("osascript", {"-e", script});
+    proc2.waitForFinished(60000);
+
+    if (proc2.exitCode() == 0) {
+        qInfo() << "CA cert installed via osascript admin prompt";
+        return true;
+    }
+
+    QString err2 = QString::fromUtf8(proc2.readAllStandardError());
+    qWarning() << "osascript install failed:" << err2;
+
+    // Method 3: Fallback to Login keychain (no admin needed, but only current user)
+    QProcess proc3;
+    proc3.start("security", {
+        "add-trusted-cert",
+        "-d",
+        "-r", "trustRoot",
+        "-k", QDir::homePath() + "/Library/Keychains/login.keychain-db",
+        certPath
+    });
+    proc3.waitForFinished(30000);
+
+    if (proc3.exitCode() == 0) {
+        qInfo() << "CA cert installed to Login keychain (user-only)";
+        return true;
+    }
+
+    m_lastError = QString("All installation methods failed.\n"
+                          "System keychain: %1\nosascript: %2\n"
+                          "Please install manually: security add-trusted-cert -d -r trustRoot -k ~/Library/Keychains/login.keychain-db \"%3\"")
+                  .arg(err1, err2, certPath);
+    qWarning() << m_lastError;
+    return false;
 }
 
 bool CertInstaller::uninstallMac()

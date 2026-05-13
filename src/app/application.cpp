@@ -18,6 +18,8 @@
 #include <QDebug>
 #include <QTimer>
 #include <QProcess>
+#include <cstdlib>
+#include <csignal>
 
 #ifndef Q_OS_WIN
 #include <unistd.h>
@@ -39,6 +41,29 @@ static void logMsg(const QString &msg) {
         f.write(msg.toUtf8());
         f.write("\n");
     }
+}
+
+// Crash-safe cleanup: ensure system proxy is restored even on abnormal exit
+static void cleanupProxy()
+{
+    ProxyConfig::disableSystemProxy();
+}
+
+static void signalHandler(int sig)
+{
+    cleanupProxy();
+    _exit(128 + sig);
+}
+
+static void installCleanupHandlers()
+{
+    std::atexit(cleanupProxy);
+    std::signal(SIGTERM, signalHandler);
+    std::signal(SIGINT, signalHandler);
+#ifndef Q_OS_WIN
+    std::signal(SIGQUIT, signalHandler);
+    std::signal(SIGHUP, signalHandler);
+#endif
 }
 
 Application::Application(QObject *parent)
@@ -76,6 +101,9 @@ Application::Application(QObject *parent)
             this, [](const QString &err) {
                 qWarning() << "MITM Error:" << err;
             });
+
+    // Register crash-safe cleanup handlers (atexit + signals)
+    installCleanupHandlers();
 
     // MITM toggle from UI
     connect(m_mainWindow.get(), &MainWindow::mitmToggled,
@@ -143,6 +171,7 @@ Application::Application(QObject *parent)
 
 Application::~Application()
 {
+    logMsg("Application shutting down...");
     m_packetCapture->stop();
     m_proxyServer->stop();
 
@@ -154,8 +183,11 @@ Application::~Application()
     }
 #endif
 
-    ProxyConfig::disableSystemProxy();
-    logMsg("Application exit: system proxy cleared, network restored");
+    if (ProxyConfig::disableSystemProxy()) {
+        logMsg("System proxy disabled successfully");
+    } else {
+        logMsg("WARNING: Failed to disable system proxy");
+    }
 }
 
 bool Application::isRunningAsAdmin()
@@ -242,22 +274,28 @@ void Application::initCertificate()
     QDir().mkpath(certDir);
 
     if (!m_certManager->initialize(certDir)) {
+        logMsg("ERROR: Failed to initialize certificate manager");
         qWarning() << "Failed to initialize certificate manager";
         return;
     }
 
+    logMsg(QString("CA cert path: %1").arg(m_certManager->caCertPath()));
+
     if (!m_certInstaller->isInstalled()) {
+        logMsg("CA certificate not in system trust store - installing...");
         qInfo() << "CA certificate not installed in system trust store.";
-        qInfo() << "CA cert path:" << m_certManager->caCertPath();
 
         if (m_certInstaller->installCaCert(m_certManager->caCertPath())) {
+            logMsg("CA certificate installed successfully");
             qInfo() << "CA certificate installed successfully";
         } else {
-            qWarning() << "Failed to install CA certificate:"
-                       << m_certInstaller->lastError();
-            qWarning() << "Please install manually:" << m_certManager->caCertPath();
+            QString err = m_certInstaller->lastError();
+            logMsg("WARNING: CA cert install failed: " + err);
+            logMsg("HTTPS decryption will not work until certificate is trusted");
+            qWarning() << "Failed to install CA certificate:" << err;
         }
     } else {
+        logMsg("CA certificate already installed in trust store");
         qInfo() << "CA certificate already installed";
     }
 }
