@@ -256,10 +256,16 @@ if(BUILD_TESTS)
     find_package(GTest QUIET)
 
     if(NOT GTest_FOUND AND VCPKG_LIB_DIR)
-        find_package(GTest REQUIRED PATHS "${VCPKG_LIB_DIR}/share/gtest")
-    elseif(NOT GTest_FOUND)
-        find_package(GTest REQUIRED)
+        find_package(GTest QUIET PATHS "${VCPKG_LIB_DIR}/share/gtest")
     endif()
+
+    if(NOT GTest_FOUND)
+        message(WARNING "GTest not found - skipping tests. Install GTest or set -DBUILD_TESTS=OFF")
+        set(BUILD_TESTS OFF)
+    endif()
+endif()
+
+if(BUILD_TESTS)
 
     set(TEST_SOURCES
         tests/test_main.cpp
