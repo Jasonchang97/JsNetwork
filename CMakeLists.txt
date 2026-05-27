@@ -184,6 +184,14 @@ if(WIN32)
         wpcap
         Packet
         wininet
+        delayimp
+    )
+
+    # Delay-load wpcap.dll and Packet.dll so the app can start and show
+    # a helpful error when Npcap is not installed, instead of crashing.
+    target_link_options(${PROJECT_NAME} PRIVATE
+        "/DELAYLOAD:wpcap.dll"
+        "/DELAYLOAD:Packet.dll"
     )
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE
