@@ -1,6 +1,8 @@
 # JsNetwork
 
-跨平台 HTTP/HTTPS 抓包分析工具，基于 Qt 5.12 + C++ + OpenSSL 构建。
+[![Build](https://github.com/Jasonchang97/JsNetwork/actions/workflows/build.yml/badge.svg)](https://github.com/Jasonchang97/JsNetwork/actions/workflows/build.yml)
+
+跨平台 HTTP/HTTPS 抓包分析工具，基于 Qt 5.15 + C++ + OpenSSL 构建。
 
 ## 功能特性
 
@@ -34,16 +36,20 @@
 
 ### 平台适配
 - macOS：`security add-trusted-cert` 证书安装、`networksetup` 系统代理
-- Windows：`certutil` 证书安装、注册表系统代理设置
-- 双平台编译支持（CMake）
+- Windows：`certutil` 证书安装、注册表系统代理设置、Winsock LSP 透明重定向
+- 双平台编译支持（CMake），路径可通过 `-D` 参数覆盖
+- 多网卡并行抓包（Npcap/libpcap 自动检测所有活跃接口）
+- 安全关闭：系统代理自动恢复、崩溃后自动清理残留设置
 - macOS .app Bundle 打包 + CPack DMG 打包
 
 ## 构建
 
 ### 依赖
-- Qt 5.12+（Core, Gui, Widgets, Network, Sql）
+- Qt 5.15+（Core, Gui, Widgets, Network, Sql）
 - OpenSSL 1.1+
 - zlib（系统自带）
+- Npcap（Windows，运行时需要）
+- libpcap（macOS，系统自带或 Homebrew）
 - CMake 3.14+
 - Google Test 1.14+（可选，用于单元测试）
 
@@ -52,16 +58,18 @@
 ```bash
 cd /path/to/JsNetwork
 
-# 编译主程序 + 测试
+# 自动查找 Qt5（通过 CMAKE_PREFIX_PATH 或系统路径）
 cmake -B build -DBUILD_TESTS=ON
 cmake --build build -j$(sysctl -n hw.ncpu)
 
+# 指定自定义路径
+cmake -B build \
+  -DQT5_DIR="/path/to/qt5" \
+  -DOPENSSL_DIR="/path/to/openssl" \
+  -DPCAP_DIR="/path/to/libpcap"
+
 # 运行测试
 cd build && ./jsnetwork_tests
-
-# 仅编译主程序（跳过测试）
-cmake -B build -DBUILD_TESTS=OFF
-cmake --build build
 ```
 
 ### Windows 编译
@@ -70,17 +78,22 @@ cmake --build build
 # 前置条件：
 # - Visual Studio 2019 或更高版本（需要 MSVC C++ 编译器）
 # - CMake 3.14+
-# - Qt5 和 OpenSSL（位于 D:\master\debug\xwares\3rd\ 目录下）
+# - Qt5、OpenSSL、Npcap SDK
 
-# 编译主程序 + 测试
-cd JsNetwork
-cmake -B build -G "Visual Studio 16 2019" -A Win32
+# 使用构建脚本（自动设置路径）
+build-win.bat
+
+# 或手动编译，指定路径
+cmake -B build -G "Visual Studio 16 2019" -A Win32 ^
+  -DQT5_DIR="C:\Qt\5.15.2\msvc2019" ^
+  -DOPENSSL_DIR="C:\OpenSSL-Win32" ^
+  -DNPCAP_SDK_DIR="C:\npcap-sdk"
 cmake --build build --config Release
 
 # 编译产物位于 build\Release\ 目录
 # 生成的文件包括：
 # - JsNetwork.exe        主程序
-# - Qt5CoreKso.dll 等    Qt 运行时库
+# - Qt5Core.dll 等       Qt 运行时库
 # - platforms\qwindows.dll  Qt 平台插件
 # - jsnetwork_tests.exe  测试程序
 ```
@@ -247,6 +260,21 @@ cpack -G DragNDrop
 
 # 生成 JsNetwork-0.1.0-Darwin.dmg
 ```
+
+## CI/CD
+
+项目使用 GitHub Actions 进行自动化构建和测试。推送到 `main`/`master` 分支或创建 PR 时自动触发。
+
+**CI 能力：**
+- Windows (msvc2019 Win32) + macOS 双平台编译
+- 单元测试自动运行
+- Qt 5.15 通过 `install-qt-action` 自动安装
+
+**CI 限制：**
+- 无法测试实际抓包功能（GitHub Actions 无 Npcap 运行时）
+- 无法测试 LSP 安装（需要修改 Winsock 目录，需管理员权限）
+- macOS arm64 构建需要自托管 runner
+- Inno Setup 安装包不在 CI 中构建
 
 ## 开发阶段
 

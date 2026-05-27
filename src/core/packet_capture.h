@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QThread>
 #include <QByteArray>
+#include <QList>
 #include <QMap>
 #include <QMutex>
 #include <QDateTime>
@@ -87,6 +88,14 @@ private:
     int m_packetCount = 0;
 };
 
+// Per-interface capture state
+struct InterfaceCapture {
+    pcap_t *handle = nullptr;
+    CaptureThread *thread = nullptr;
+    QString name;
+    QString description;
+};
+
 class PacketCapture : public QObject
 {
     Q_OBJECT
@@ -102,8 +111,11 @@ public:
 
 signals:
     void requestCaptured(const RequestItem &item);
+    void captureStatusChanged(const QString &message);
 
 private:
-    CaptureThread *m_thread = nullptr;
-    pcap_t *m_handle = nullptr;
+    bool startCaptureOnInterface(pcap_if_t *dev);
+    static bool isNpcapInstalled();
+
+    QList<InterfaceCapture> m_captures;
 };

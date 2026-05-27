@@ -405,8 +405,10 @@ void CaptureThread::processTcpPacket(const struct pcap_pkthdr *header, const u_c
             stream.clientSeqInit = true;
             stream.requestData.append((const char *)payload, payloadLen);
         } else {
-            quint32 expected = stream.clientSeq + stream.requestData.size();
-            if (seqNum >= expected || seqNum < stream.clientSeq) {
+            // TCP sequence comparison (RFC 793): handles quint32 wrap-around
+            quint32 expected = stream.clientSeq + (quint32)stream.requestData.size();
+            quint32 diff = seqNum - expected;
+            if (diff < 0x80000000u || seqNum == stream.clientSeq) {
                 stream.requestData.append((const char *)payload, payloadLen);
             }
         }
@@ -416,8 +418,10 @@ void CaptureThread::processTcpPacket(const struct pcap_pkthdr *header, const u_c
             stream.serverSeqInit = true;
             stream.responseData.append((const char *)payload, payloadLen);
         } else {
-            quint32 expected = stream.serverSeq + stream.responseData.size();
-            if (seqNum >= expected || seqNum < stream.serverSeq) {
+            // TCP sequence comparison (RFC 793): handles quint32 wrap-around
+            quint32 expected = stream.serverSeq + (quint32)stream.responseData.size();
+            quint32 diff = seqNum - expected;
+            if (diff < 0x80000000u || seqNum == stream.serverSeq) {
                 stream.responseData.append((const char *)payload, payloadLen);
             }
         }
@@ -649,6 +653,19 @@ PacketCapture::~PacketCapture()
     stop();
 }
 
+bool PacketCapture::isNpcapInstalled()
+{
+#ifdef Q_OS_WIN
+    // Check for Npcap DLLs in standard locations
+    return QFile::exists("C:/Windows/System32/Npcap/wpcap.dll")
+        || QFile::exists("C:/Windows/SysWOW64/Npcap/wpcap.dll");
+#else
+    // macOS: libpcap is always available
+    return QFile::exists("/usr/lib/libpcap.dylib")
+        || QFile::exists("/opt/homebrew/opt/libpcap/lib/libpcap.dylib");
+#endif
+}
+
 QStringList PacketCapture::availableInterfaces()
 {
     QStringList names;
@@ -674,8 +691,21 @@ QStringList PacketCapture::availableInterfaces()
 
 bool PacketCapture::start()
 {
-    if (m_handle) {
+    if (!m_captures.isEmpty()) {
         stop();
+    }
+
+    // Check Npcap/libpcap availability
+    if (!isNpcapInstalled()) {
+#ifdef Q_OS_WIN
+        QString msg = "Npcap not installed. Download from https://npcap.com and install with 'WinPcap API-compatible Mode' enabled.";
+#else
+        QString msg = "libpcap not found. Install via: brew install libpcap";
+#endif
+        qWarning() << "PacketCapture:" << msg;
+        logToFile("ERROR: " + msg);
+        emit captureStatusChanged(msg);
+        return false;
     }
 
     char errbuf[PCAP_ERRBUF_SIZE];
@@ -684,6 +714,7 @@ bool PacketCapture::start()
     if (pcap_findalldevs(&alldevs, errbuf) == -1) {
         qWarning() << "PacketCapture: pcap_findalldevs failed:" << errbuf;
         logToFile("ERROR: pcap_findalldevs failed: " + QString(errbuf));
+        emit captureStatusChanged(QString("pcap_findalldevs failed: %1").arg(errbuf));
         return false;
     }
 
@@ -698,17 +729,19 @@ bool PacketCapture::start()
         logToFile("  IF: " + name + " | " + desc + " flags=" + QString::number(d->flags));
     }
 
-    // Find the best network interface (Ethernet/Wi-Fi preferred)
-    pcap_if_t *selectedDev = nullptr;
-    pcap_if_t *fallbackDev = nullptr;
+    // Collect all suitable interfaces
+    QList<pcap_if_t*> candidates;
     for (pcap_if_t *d = alldevs; d; d = d->next) {
         if (!d->addresses) continue;
-        if (d->flags & 0x00000001) continue;  // Skip loopback
+#ifdef PCAP_IF_LOOPBACK
+        if (d->flags & PCAP_IF_LOOPBACK) continue;
+#else
+        if (d->flags & 0x00000001) continue;
+#endif
         QString name = QString::fromLocal8Bit(d->name);
         QString desc = d->description ? QString::fromLocal8Bit(d->description) : "";
         if (name.contains("NPCAP", Qt::CaseInsensitive) || name.contains("Loopback", Qt::CaseInsensitive))
             continue;
-        // Skip virtual/adapters that won't carry real traffic
         if (desc.contains("Bluetooth", Qt::CaseInsensitive) ||
             desc.contains("WAN Miniport", Qt::CaseInsensitive) ||
             desc.contains("VMware", Qt::CaseInsensitive) ||
@@ -716,93 +749,128 @@ bool PacketCapture::start()
             desc.contains("Hyper-V", Qt::CaseInsensitive) ||
             desc.contains("Teredo", Qt::CaseInsensitive) ||
             desc.contains("isatap", Qt::CaseInsensitive)) {
-            if (!fallbackDev) fallbackDev = d;
             continue;
         }
-        // Prefer Ethernet/Wi-Fi/Realtek adapters
-        selectedDev = d;
-        break;
+        candidates.append(d);
     }
 
-    if (!selectedDev) selectedDev = fallbackDev;
-    if (!selectedDev) {
-        // Last resort: use first interface
+    // Fallback: if no candidates, try all non-loopback interfaces
+    if (candidates.isEmpty()) {
+        logToFile("No preferred interfaces found, trying all non-loopback");
         for (pcap_if_t *d = alldevs; d; d = d->next) {
-            selectedDev = d;
-            break;
+            if (!d->addresses) continue;
+#ifdef PCAP_IF_LOOPBACK
+            if (d->flags & PCAP_IF_LOOPBACK) continue;
+#else
+            if (d->flags & 0x00000001) continue;
+#endif
+            candidates.append(d);
         }
     }
 
-    if (!selectedDev) {
-        qWarning() << "PacketCapture: no interfaces found";
+    if (candidates.isEmpty()) {
+        qWarning() << "PacketCapture: no suitable interfaces found";
+        logToFile("ERROR: no suitable interfaces found");
         pcap_freealldevs(alldevs);
+        emit captureStatusChanged("No suitable network interfaces found.");
         return false;
     }
 
-    QString selectedName = QString::fromLocal8Bit(selectedDev->name);
-    QString selectedDesc = selectedDev->description ? QString::fromLocal8Bit(selectedDev->description) : "";
-    qDebug() << "PacketCapture: using interface" << selectedDev->name;
-    logToFile("Selected: " + selectedName + " | " + selectedDesc);
+    // Start capture on all suitable interfaces
+    bool anyStarted = false;
+    for (pcap_if_t *d : candidates) {
+        if (startCaptureOnInterface(d)) {
+            anyStarted = true;
+        }
+    }
 
-    m_handle = pcap_open_live(selectedDev->name, 65536, 1, 100, errbuf);
     pcap_freealldevs(alldevs);
 
-    if (!m_handle) {
-        qWarning() << "PacketCapture: pcap_open_live failed:" << errbuf;
-        logToFile("ERROR: pcap_open_live failed: " + QString(errbuf));
+    if (anyStarted) {
+        logToFile(QString("Packet capture started on %1 interface(s)").arg(m_captures.size()));
+        emit captureStatusChanged(QString("Capturing on %1 interface(s)").arg(m_captures.size()));
+    }
+
+    return anyStarted;
+}
+
+bool PacketCapture::startCaptureOnInterface(pcap_if_t *dev)
+{
+    char errbuf[PCAP_ERRBUF_SIZE];
+    QString devName = QString::fromLocal8Bit(dev->name);
+    QString devDesc = dev->description ? QString::fromLocal8Bit(dev->description) : devName;
+
+    pcap_t *handle = pcap_open_live(dev->name, 65536, 1, 100, errbuf);
+    if (!handle) {
+        qWarning() << "PacketCapture: pcap_open_live failed for" << devName << ":" << errbuf;
+        logToFile("WARNING: pcap_open_live failed for " + devName + ": " + QString(errbuf));
         return false;
     }
-    logToFile("pcap_open_live OK, link type: " + QString::number(pcap_datalink(m_handle)));
 
-    // Capture all TCP and UDP except our proxy port
+    logToFile("Opened: " + devName + " | " + devDesc + " link=" + QString::number(pcap_datalink(handle)));
+
+    // Set BPF filter: capture all TCP and UDP except our proxy port
     struct bpf_program fp;
     const char *filter = "(tcp or udp) and not port 9527";
-    logToFile("BPF filter: " + QString(filter));
-    if (pcap_compile(m_handle, &fp, filter, 1, PCAP_NETMASK_UNKNOWN) == -1) {
-        qWarning() << "PacketCapture: pcap_compile failed:" << pcap_geterr(m_handle);
-        logToFile("ERROR: pcap_compile failed: " + QString(pcap_geterr(m_handle)));
-        pcap_close(m_handle);
-        m_handle = nullptr;
+    if (pcap_compile(handle, &fp, filter, 1, PCAP_NETMASK_UNKNOWN) == -1) {
+        qWarning() << "PacketCapture: pcap_compile failed for" << devName << ":" << pcap_geterr(handle);
+        logToFile("ERROR: pcap_compile failed for " + devName + ": " + QString(pcap_geterr(handle)));
+        pcap_close(handle);
         return false;
     }
 
-    if (pcap_setfilter(m_handle, &fp) == -1) {
-        qWarning() << "PacketCapture: pcap_setfilter failed:" << pcap_geterr(m_handle);
-        logToFile("ERROR: pcap_setfilter failed: " + QString(pcap_geterr(m_handle)));
+    if (pcap_setfilter(handle, &fp) == -1) {
+        qWarning() << "PacketCapture: pcap_setfilter failed for" << devName << ":" << pcap_geterr(handle);
+        logToFile("ERROR: pcap_setfilter failed for " + devName + ": " + QString(pcap_geterr(handle)));
         pcap_freecode(&fp);
-        pcap_close(m_handle);
-        m_handle = nullptr;
+        pcap_close(handle);
         return false;
     }
     pcap_freecode(&fp);
-    logToFile("BPF filter set OK");
 
-    // Start capture thread
-    m_thread = new CaptureThread(m_handle, this);
-    connect(m_thread, &CaptureThread::httpCaptured,
+    // Create capture thread
+    CaptureThread *thread = new CaptureThread(handle, this);
+    connect(thread, &CaptureThread::httpCaptured,
             this, &PacketCapture::requestCaptured, Qt::QueuedConnection);
-    connect(m_thread, &CaptureThread::finished, m_thread, &QObject::deleteLater);
-    m_thread->start();
+    connect(thread, &CaptureThread::finished, thread, &QObject::deleteLater);
+    thread->start();
 
-    qDebug() << "PacketCapture: started";
+    InterfaceCapture ic;
+    ic.handle = handle;
+    ic.thread = thread;
+    ic.name = devName;
+    ic.description = devDesc;
+    m_captures.append(ic);
+
+    logToFile("Capture thread started for: " + devName);
+    qDebug() << "PacketCapture: capturing on" << devName;
+
     return true;
 }
 
 void PacketCapture::stop()
 {
-    if (m_thread) {
-        m_thread->requestStop();
-        m_thread->wait(5000);
-        m_thread = nullptr;
+    for (auto &ic : m_captures) {
+        if (ic.thread) {
+            ic.thread->requestStop();
+            ic.thread->wait(5000);
+            ic.thread = nullptr;
+        }
+        if (ic.handle) {
+            pcap_close(ic.handle);
+            ic.handle = nullptr;
+        }
     }
-    if (m_handle) {
-        pcap_close(m_handle);
-        m_handle = nullptr;
-    }
+    m_captures.clear();
     qDebug() << "PacketCapture: stopped";
 }
 
 bool PacketCapture::isRunning() const
 {
-    return m_thread && m_thread->isRunning();
+    for (const auto &ic : m_captures) {
+        if (ic.thread && ic.thread->isRunning()) {
+            return true;
+        }
+    }
+    return false;
 }

@@ -1,0 +1,75 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          arch: win32_msvc2019
+
+      - name: Install Npcap SDK
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile npcap-sdk.zip
+          Expand-Archive -Path npcap-sdk.zip -DestinationPath C:\npcap-sdk
+          echo "NPCAP_SDK_DIR=C:\npcap-sdk" >> $env:GITHUB_ENV
+
+      - name: Install OpenSSL
+        shell: bash
+        run: choco install openssl -y --no-progress
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A Win32 \
+            -DQT5_DIR="${{ env.Qt5_DIR }}" \
+            -DNPCAP_SDK_DIR="${{ env.NPCAP_SDK_DIR }}" \
+            -DOPENSSL_DIR="C:/Program Files/OpenSSL-Win32" \
+            -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Run Tests
+        shell: bash
+        run: cd build && ctest -C Release --output-on-failure
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt 5.15
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          target: 'desktop'
+
+      - name: Install dependencies
+        run: |
+          brew install openssl@1.1 libpcap
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DQT5_DIR="${{ env.Qt5_DIR }}" \
+            -DOPENSSL_DIR="$(brew --prefix openssl@1.1)" \
+            -DPCAP_DIR="$(brew --prefix libpcap)" \
+            -DBUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build -j$(sysctl -n hw.ncpu)
+
+      - name: Run Tests
+        run: cd build && ctest --output-on-failure

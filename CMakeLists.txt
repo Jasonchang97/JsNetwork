@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(JsNetwork VERSION 1.0.1 LANGUAGES CXX)
+project(JsNetwork VERSION 1.0.2 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-# Platform-specific paths
+# Platform-specific paths (overridable via -D flags)
 if(WIN32)
     # MSVC UTF-8 source encoding
     if(MSVC)
@@ -15,23 +15,20 @@ if(WIN32)
         add_compile_definitions(_CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
     endif()
 
-    # Windows paths
-    set(QT5_DIR "D:/aqua/debug/xwares/3rd/qt5/build_x86/qtbase")
-    set(VCPKG_LIB_DIR "D:/aqua/debug/xwares/3rd/default/x86-windows")
-    set(OPENSSL_STATIC_DIR "D:/aqua/debug/xwares/3rd/static/x86-windows-static")
-    set(OPENSSL_DIR "${OPENSSL_STATIC_DIR}")
-    set(NPCAP_SDK_DIR "D:/npcap-sdk")
+    set(QT5_DIR "" CACHE PATH "Path to Qt5 installation root (e.g. C:/Qt/5.15.2/msvc2019)")
+    set(VCPKG_LIB_DIR "" CACHE PATH "Path to vcpkg installed libraries")
+    set(OPENSSL_DIR "" CACHE PATH "Path to OpenSSL installation")
+    set(NPCAP_SDK_DIR "" CACHE PATH "Path to Npcap SDK")
 else()
-    # macOS paths
-    set(QT5_DIR "/Users/test/code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase")
-    set(OPENSSL_DIR "/Users/test/code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic")
-    set(VCPKG_LIB_DIR "${OPENSSL_DIR}")
-    # pcap from Homebrew
-    set(PCAP_DIR "/opt/homebrew/opt/libpcap")
+    set(QT5_DIR "" CACHE PATH "Path to Qt5 installation root")
+    set(OPENSSL_DIR "" CACHE PATH "Path to OpenSSL installation")
+    set(PCAP_DIR "" CACHE PATH "Path to libpcap installation")
 endif()
 
-set(CMAKE_PREFIX_PATH "${QT5_DIR}")
-
+# Find Qt5 - use custom path if provided, otherwise auto-detect
+if(QT5_DIR)
+    set(CMAKE_PREFIX_PATH "${QT5_DIR}")
+endif()
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 
 set(SOURCES
@@ -126,29 +123,29 @@ endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${QT5_DIR}/include
-    ${OPENSSL_DIR}/include
-    ${VCPKG_LIB_DIR}/include
 )
 
-if(WIN32 AND DEFINED NPCAP_SDK_DIR)
+if(OPENSSL_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${OPENSSL_DIR}/include)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${OPENSSL_DIR}/lib)
+endif()
+
+if(WIN32 AND VCPKG_LIB_DIR)
+    target_include_directories(${PROJECT_NAME} PRIVATE ${VCPKG_LIB_DIR}/include)
+    target_link_directories(${PROJECT_NAME} PRIVATE ${VCPKG_LIB_DIR}/lib)
+endif()
+
+if(WIN32 AND DEFINED NPCAP_SDK_DIR AND NPCAP_SDK_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Include)
     target_link_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Lib)
 endif()
 
-if(APPLE AND DEFINED PCAP_DIR)
+if(APPLE AND DEFINED PCAP_DIR AND PCAP_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE ${PCAP_DIR}/include)
     target_link_directories(${PROJECT_NAME} PRIVATE ${PCAP_DIR}/lib)
 endif()
 
-target_link_directories(${PROJECT_NAME} PRIVATE
-    ${OPENSSL_DIR}/lib
-    ${VCPKG_LIB_DIR}/lib
-)
-
 if(WIN32)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${QT5_DIR}/lib)
-    # Static OpenSSL - no DLLs needed, no applink.c needed
     target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt5::Core
         Qt5::Gui
@@ -217,20 +214,28 @@ endif()
 if(WIN32)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT5_DIR}/bin/Qt5CoreKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT5_DIR}/bin/Qt5GuiKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT5_DIR}/bin/Qt5WidgetsKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT5_DIR}/bin/Qt5NetworkKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT5_DIR}/bin/Qt5SqlKso.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${QT5_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
         COMMENT "Copying Qt DLLs"
     )
+
+    # Copy Qt DLLs (standard names, found via Qt5::Core location)
+    get_target_property(QT5_CORE_LOCATION Qt5::Core LOCATION)
+    get_filename_component(QT5_BIN_DIR "${QT5_CORE_LOCATION}" DIRECTORY)
+
+    foreach(QT_DLL Core Gui Widgets Network Sql)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${QT5_BIN_DIR}/Qt5${QT_DLL}.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+        )
+    endforeach()
+
+    # Qt platform plugin
+    if(QT5_DIR)
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${QT5_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
+        )
+    endif()
+
     # Copy Npcap DLLs (32-bit from SysWOW64)
     if(EXISTS "C:/Windows/SysWOW64/Npcap/wpcap.dll")
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
@@ -248,7 +253,13 @@ option(BUILD_TESTS "Build unit tests" ON)
 
 if(BUILD_TESTS)
     enable_testing()
-    find_package(GTest REQUIRED PATHS "${VCPKG_LIB_DIR}/share/gtest")
+    find_package(GTest QUIET)
+
+    if(NOT GTest_FOUND AND VCPKG_LIB_DIR)
+        find_package(GTest REQUIRED PATHS "${VCPKG_LIB_DIR}/share/gtest")
+    elseif(NOT GTest_FOUND)
+        find_package(GTest REQUIRED)
+    endif()
 
     set(TEST_SOURCES
         tests/test_main.cpp
@@ -267,17 +278,7 @@ if(BUILD_TESTS)
 
     target_include_directories(jsnetwork_tests PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
-        ${QT5_DIR}/include
-        ${VCPKG_LIB_DIR}/include
     )
-
-    target_link_directories(jsnetwork_tests PRIVATE
-        ${VCPKG_LIB_DIR}/lib
-    )
-
-    if(WIN32)
-        target_link_directories(jsnetwork_tests PRIVATE ${QT5_DIR}/lib)
-    endif()
 
     target_link_libraries(jsnetwork_tests PRIVATE
         Qt5::Core
@@ -316,7 +317,6 @@ if(WIN32)
     target_include_directories(jsnetwork_lsp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     set_target_properties(jsnetwork_lsp PROPERTIES
         OUTPUT_NAME "jsnetwork_lsp"
-        # No Qt dependency - plain Win32 DLL
     )
 
     # LSP Installer/Uninstaller

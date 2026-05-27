@@ -56,14 +56,27 @@ static void signalHandler(int sig)
     _exit(128 + sig);
 }
 
+#ifdef Q_OS_WIN
+static LONG WINAPI crashHandler(EXCEPTION_POINTERS *)
+{
+    cleanupProxy();
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 static void installCleanupHandlers()
 {
     std::atexit(cleanupProxy);
     std::signal(SIGTERM, signalHandler);
     std::signal(SIGINT, signalHandler);
+    std::signal(SIGSEGV, signalHandler);
+    std::signal(SIGABRT, signalHandler);
 #ifndef Q_OS_WIN
     std::signal(SIGQUIT, signalHandler);
     std::signal(SIGHUP, signalHandler);
+#endif
+#ifdef Q_OS_WIN
+    SetUnhandledExceptionFilter(crashHandler);
 #endif
 }
 
@@ -97,6 +110,10 @@ Application::Application(QObject *parent)
         if (m_storage->isOpen()) {
             m_storage->saveRequest(item);
         }
+    });
+    connect(m_packetCapture.get(), &PacketCapture::captureStatusChanged,
+            this, [](const QString &msg) {
+        logMsg("PacketCapture: " + msg);
     });
     connect(m_proxyServer.get(), &ProxyServer::mitmError,
             this, [](const QString &err) {
@@ -173,22 +190,33 @@ Application::Application(QObject *parent)
 Application::~Application()
 {
     logMsg("Application shutting down...");
+
     m_packetCapture->stop();
+    logMsg("Packet capture stopped");
+
     m_proxyServer->stop();
+    logMsg("Proxy server stopped");
 
 #ifdef Q_OS_WIN
     if (m_proxyActiveEvent) {
+        ResetEvent((HANDLE)m_proxyActiveEvent);
         CloseHandle(m_proxyActiveEvent);
         m_proxyActiveEvent = nullptr;
-        logMsg("Named Event closed - LSP will pass through directly");
+        logMsg("Named Event reset and closed - LSP will pass through directly");
     }
 #endif
 
-    if (ProxyConfig::disableSystemProxy()) {
-        logMsg("System proxy disabled successfully");
+    if (ProxyConfig::isSystemProxyEnabled()) {
+        if (ProxyConfig::disableSystemProxy()) {
+            logMsg("System proxy disabled successfully");
+        } else {
+            logMsg("WARNING: Failed to disable system proxy");
+        }
     } else {
-        logMsg("WARNING: Failed to disable system proxy");
+        logMsg("System proxy was not enabled, no need to disable");
     }
+
+    logMsg("Application shutdown complete");
 }
 
 bool Application::isRunningAsAdmin()
@@ -210,9 +238,26 @@ bool Application::isRunningAsAdmin()
 
 void Application::checkPreviousCrashLsp()
 {
-    // Always clear system proxy on startup in case previous session crashed
-    ProxyConfig::disableSystemProxy();
-    logMsg("Startup: cleared any stale proxy settings");
+    // Check if proxy was left enabled from a previous crash
+    if (ProxyConfig::isSystemProxyEnabled()) {
+        logMsg("Startup: detected stale proxy settings from previous session - clearing");
+        if (ProxyConfig::disableSystemProxy()) {
+            logMsg("Startup: stale proxy settings cleared successfully");
+        } else {
+            logMsg("Startup: WARNING - failed to clear stale proxy settings");
+        }
+    } else {
+        logMsg("Startup: no stale proxy settings detected");
+    }
+
+#ifdef Q_OS_WIN
+    // Check if Named Event was left signaled from a previous crash
+    HANDLE hEvent = OpenEventW(EVENT_ALL_ACCESS, FALSE, L"Global\\JsNetwork_ProxyActive_9527");
+    if (hEvent) {
+        CloseHandle(hEvent);
+        logMsg("Startup: detected stale Named Event from previous session (will be recreated)");
+    }
+#endif
 }
 
 void Application::start()
@@ -289,18 +334,18 @@ void Application::initCertificate()
         return;
     }
 
-    // Always ensure cert is installed (security add-trusted-cert is idempotent)
+    // Only install if not already present in the trust store
     if (m_certInstaller->isInstalled()) {
-        logMsg("CA cert already in keychain - verifying trust...");
-    } else {
-        logMsg("CA cert not in keychain - installing...");
+        logMsg("CA cert already installed - skipping installation");
+        return;
     }
 
+    logMsg("CA cert not in trust store - installing...");
     if (m_certInstaller->installCaCert(certPath)) {
         if (m_certInstaller->isInstalled()) {
             logMsg("CA cert installed and verified");
         } else {
-            logMsg("WARNING: install returned success but cert not found in keychain");
+            logMsg("WARNING: install returned success but cert not found in trust store");
         }
     } else {
         logMsg("WARNING: CA cert install failed: " + m_certInstaller->lastError());

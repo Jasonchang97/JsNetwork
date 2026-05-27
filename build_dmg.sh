@@ -3,17 +3,22 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUILD_DIR="$SCRIPT_DIR/build"
-QT_DIR="/Users/test/code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase"
-OPENSSL_DIR="/Users/test/code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic"
+
+# Allow environment variables to override defaults
+QT_DIR="${QT_DIR:-/Users/test/code/debug/xwares/vcpkg_install_arm64/qt5/build_arm64/qtbase}"
+OPENSSL_DIR="${OPENSSL_DIR:-/Users/test/code/debug/xwares/vcpkg_install_arm64/default/arm64-osx-dynamic}"
+
 APP_NAME="JsNetwork"
-VERSION="1.0.1"
+VERSION="1.0.2"
 
 echo "=== Building JsNetwork DMG ==="
 
 # Step 1: Build
 echo "[1/5] Building..."
 cd "$BUILD_DIR"
-cmake .. -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release 2>&1 | tail -3
+cmake .. -DBUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+    -DQT5_DIR="$QT_DIR" \
+    -DOPENSSL_DIR="$OPENSSL_DIR" 2>&1 | tail -3
 cmake --build . -j$(sysctl -n hw.ncpu) 2>&1 | tail -3
 
 # Step 2: Prepare clean .app bundle
