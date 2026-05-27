@@ -108,15 +108,16 @@ jobs:
         run: |
           git clone https://github.com/microsoft/vcpkg.git /tmp/vcpkg
           /tmp/vcpkg/bootstrap-vcpkg.sh -disableMetrics
-          /tmp/vcpkg/vcpkg install openssl libpcap --triplet x64-osx
-          echo "DEPS_DIR=/tmp/vcpkg/installed/x64-osx" >> $GITHUB_ENV
+          /tmp/vcpkg/vcpkg install openssl libpcap --triplet x64-osx-dynamic
+          echo "DEPS_DIR=/tmp/vcpkg/installed/x64-osx-dynamic" >> $GITHUB_ENV
 
       - name: Configure
         run: |
           cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DCMAKE_TOOLCHAIN_FILE=/tmp/vcpkg/scripts/buildsystems/vcpkg.cmake \
-            -DVCPKG_TARGET_TRIPLET=x64-osx \
+            -DVCPKG_TARGET_TRIPLET=x64-osx-dynamic \
             -DQT5_DIR="${{ env.Qt5_DIR }}" \
             -DOPENSSL_DIR="${{ env.DEPS_DIR }}" \
             -DBUILD_TESTS=ON
@@ -132,38 +133,45 @@ jobs:
         shell: bash
         run: |
           set +e
+          APP=build/JsNetwork.app
           # Replace launcher script with real binary
-          cp build/JsNetwork.app/Contents/MacOS/JsNetwork.bin build/JsNetwork.app/Contents/MacOS/JsNetwork
-          chmod +x build/JsNetwork.app/Contents/MacOS/JsNetwork
-          # Bundle Qt frameworks
-          "${{ env.QT_ROOT_DIR }}/bin/macdeployqt" build/JsNetwork.app -verbose=1
+          cp "$APP/Contents/MacOS/JsNetwork.bin" "$APP/Contents/MacOS/JsNetwork"
+          chmod +x "$APP/Contents/MacOS/JsNetwork"
+          # Bundle Qt frameworks (macdeployqt copies all plugins by default)
+          "${{ env.QT_ROOT_DIR }}/bin/macdeployqt" "$APP" -verbose=1
           echo "macdeployqt exit code: $?"
-          # Find and copy OpenSSL dylibs from vcpkg
-          mkdir -p build/JsNetwork.app/Contents/Frameworks
-          SSL_DYLIB=$(find "$DEPS_DIR/lib" -name "libssl*" -type f | head -1)
-          CRYPTO_DYLIB=$(find "$DEPS_DIR/lib" -name "libcrypto*" -type f | head -1)
-          echo "SSL_DYLIB=$SSL_DYLIB"
-          echo "CRYPTO_DYLIB=$CRYPTO_DYLIB"
-          if [ -n "$SSL_DYLIB" ]; then
-            cp "$SSL_DYLIB" build/JsNetwork.app/Contents/Frameworks/
-            SSL_NAME=$(basename "$SSL_DYLIB")
-            install_name_tool -change "$SSL_DYLIB" "@executable_path/../Frameworks/$SSL_NAME" build/JsNetwork.app/Contents/MacOS/JsNetwork
-          fi
-          if [ -n "$CRYPTO_DYLIB" ]; then
-            cp "$CRYPTO_DYLIB" build/JsNetwork.app/Contents/Frameworks/
-            CRYPTO_NAME=$(basename "$CRYPTO_DYLIB")
-            install_name_tool -change "$CRYPTO_DYLIB" "@executable_path/../Frameworks/$CRYPTO_NAME" build/JsNetwork.app/Contents/MacOS/JsNetwork
-          fi
+          # Remove unnecessary Qt plugins (only keep platforms and sqldrivers)
+          for dir in imageformats iconengines styles printsupport bearer; do
+            rm -rf "$APP/Contents/PlugIns/$dir"
+          done
+          # Strip Qt framework Headers and .prl files (not needed at runtime)
+          find "$APP/Contents/Frameworks" -name "Headers" -type d -exec rm -rf {} + 2>/dev/null
+          find "$APP/Contents/Frameworks" -name "*.prl" -delete 2>/dev/null
+          # Copy OpenSSL dylibs (dynamic triplet produces .dylib files)
+          mkdir -p "$APP/Contents/Frameworks"
+          cp "$DEPS_DIR/lib/libssl.3.dylib" "$APP/Contents/Frameworks/" 2>/dev/null || true
+          cp "$DEPS_DIR/lib/libcrypto.3.dylib" "$APP/Contents/Frameworks/" 2>/dev/null || true
+          # Fix rpath for OpenSSL
+          install_name_tool -change \
+            "$DEPS_DIR/lib/libssl.3.dylib" \
+            "@executable_path/../Frameworks/libssl.3.dylib" \
+            "$APP/Contents/MacOS/JsNetwork" 2>/dev/null || true
+          install_name_tool -change \
+            "$DEPS_DIR/lib/libcrypto.3.dylib" \
+            "@executable_path/../Frameworks/libcrypto.3.dylib" \
+            "$APP/Contents/MacOS/JsNetwork" 2>/dev/null || true
           # Ad-hoc code sign
-          codesign --force --deep --sign - build/JsNetwork.app
+          codesign --force --deep --sign - "$APP"
           echo "codesign exit code: $?"
 
       - name: Package macOS artifact
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          cd build
-          hdiutil create -volname JsNetwork -srcfolder JsNetwork.app -ov -format UDZO JsNetwork-macOS.dmg
-          mv JsNetwork-macOS.dmg ../JsNetwork-macOS.dmg
+          mkdir -p build/_dmg
+          cp -R build/JsNetwork.app build/_dmg/
+          ln -s /Applications build/_dmg/Applications
+          hdiutil create -volname JsNetwork -srcfolder build/_dmg -ov -format UDZO build/JsNetwork-macOS.dmg
+          mv build/JsNetwork-macOS.dmg JsNetwork-macOS.dmg
 
       - name: Upload macOS artifact
         if: startsWith(github.ref, 'refs/tags/')
