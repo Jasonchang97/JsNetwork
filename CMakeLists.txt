@@ -250,13 +250,12 @@ if(WIN32)
         )
     endforeach()
 
-    # Qt platform plugin
-    if(QT5_DIR)
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${QT5_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
-        )
-    endif()
+    # Qt platform plugin (derive from Qt5::Core location, not QT5_DIR)
+    get_filename_component(QT5_ROOT_DIR "${QT5_BIN_DIR}" DIRECTORY)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${QT5_ROOT_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
+    )
 
     # Copy Npcap DLLs (32-bit from SysWOW64)
     if(EXISTS "C:/Windows/SysWOW64/Npcap/wpcap.dll")
