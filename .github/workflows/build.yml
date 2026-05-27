@@ -147,19 +147,20 @@ jobs:
           # Strip Qt framework Headers and .prl files (not needed at runtime)
           find "$APP/Contents/Frameworks" -name "Headers" -type d -exec rm -rf {} + 2>/dev/null
           find "$APP/Contents/Frameworks" -name "*.prl" -delete 2>/dev/null
-          # Copy OpenSSL dylibs (dynamic triplet produces .dylib files)
+          # Copy OpenSSL dylibs (find .dylib files, skip .a static archives)
           mkdir -p "$APP/Contents/Frameworks"
-          cp "$DEPS_DIR/lib/libssl.3.dylib" "$APP/Contents/Frameworks/" 2>/dev/null || true
-          cp "$DEPS_DIR/lib/libcrypto.3.dylib" "$APP/Contents/Frameworks/" 2>/dev/null || true
-          # Fix rpath for OpenSSL
-          install_name_tool -change \
-            "$DEPS_DIR/lib/libssl.3.dylib" \
-            "@executable_path/../Frameworks/libssl.3.dylib" \
-            "$APP/Contents/MacOS/JsNetwork" 2>/dev/null || true
-          install_name_tool -change \
-            "$DEPS_DIR/lib/libcrypto.3.dylib" \
-            "@executable_path/../Frameworks/libcrypto.3.dylib" \
-            "$APP/Contents/MacOS/JsNetwork" 2>/dev/null || true
+          for lib in ssl crypto; do
+            DYLIB=$(find "$DEPS_DIR/lib" -name "lib${lib}*.dylib" | head -1)
+            if [ -n "$DYLIB" ]; then
+              cp "$DYLIB" "$APP/Contents/Frameworks/"
+              INSTALL_NAME=$(otool -D "$DYLIB" | tail -1)
+              BASENAME=$(basename "$DYLIB")
+              install_name_tool -change "$INSTALL_NAME" "@executable_path/../Frameworks/$BASENAME" "$APP/Contents/MacOS/JsNetwork"
+              echo "Bundled $BASENAME (install_name: $INSTALL_NAME)"
+            else
+              echo "WARNING: lib${lib}*.dylib not found in $DEPS_DIR/lib"
+            fi
+          done
           # Ad-hoc code sign
           codesign --force --deep --sign - "$APP"
           echo "codesign exit code: $?"
