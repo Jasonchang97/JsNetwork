@@ -65,6 +65,7 @@ jobs:
         run: cd build && ctest -C Release --output-on-failure
 
   build-macos:
+    needs: build-windows
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
