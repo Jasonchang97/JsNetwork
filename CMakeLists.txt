@@ -156,6 +156,13 @@ if(APPLE AND DEFINED PCAP_DIR AND PCAP_DIR)
     target_link_directories(${PROJECT_NAME} PRIVATE ${PCAP_DIR}/lib)
 endif()
 
+# Find zlib (Windows library names vary: zlib, zs, z)
+find_library(ZLIB_LIB NAMES zlib zlibstatic z zs)
+if(NOT ZLIB_LIB)
+    message(FATAL_ERROR "zlib library not found")
+endif()
+message(STATUS "Found zlib: ${ZLIB_LIB}")
+
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE
         Qt5::Core
@@ -169,7 +176,7 @@ if(WIN32)
         crypt32
         gdi32
         user32
-        zlib
+        ${ZLIB_LIB}
         wpcap
         Packet
         wininet
@@ -312,7 +319,7 @@ if(BUILD_TESTS)
     if(APPLE)
         target_link_libraries(jsnetwork_tests PRIVATE z)
     elseif(WIN32)
-        target_link_libraries(jsnetwork_tests PRIVATE zlib)
+        target_link_libraries(jsnetwork_tests PRIVATE ${ZLIB_LIB})
     endif()
 
     add_test(NAME JsNetworkTests COMMAND jsnetwork_tests)
