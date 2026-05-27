@@ -83,15 +83,14 @@ jobs:
 
       - name: Build Windows installer
         if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+        run: iscc installer.iss
 
       - name: Upload Windows artifact
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: JsNetwork-windows
-          path: installer/Output/JsNetwork-*.exe
+          path: Output/JsNetwork-*.exe
 
   build-macos:
     needs: build-windows
