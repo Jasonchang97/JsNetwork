@@ -49,20 +49,49 @@ jobs:
         shell: bash
         run: cd build && ctest -C Release --output-on-failure
 
-      - name: Install NSIS
+      - name: Install Inno Setup
         if: startsWith(github.ref, 'refs/tags/')
-        run: choco install nsis -y --no-progress
+        run: choco install innosetup -y --no-progress
 
-      - name: Package Windows installer
+      - name: Stage files for installer
         if: startsWith(github.ref, 'refs/tags/')
-        run: cd build && cpack -G NSIS -C Release
+        shell: pwsh
+        run: |
+          mkdir staging
+          $rel = "build\Release"
+          # App
+          cp "$rel\JsNetwork.exe" staging\
+          # Qt DLLs
+          foreach ($dll in (Get-ChildItem "$rel\Qt5*.dll")) { cp $dll.FullName staging\ }
+          # Qt platform plugin
+          mkdir staging\platforms
+          cp "$rel\platforms\qwindows.dll" staging\platforms\
+          # LSP
+          cp "$rel\jsnetwork_lsp.dll" staging\
+          cp "$rel\lsp_installer.exe" staging\
+          # Npcap DLLs
+          cp "$rel\wpcap.dll" staging\ -ErrorAction SilentlyContinue
+          cp "$rel\Packet.dll" staging\ -ErrorAction SilentlyContinue
+          # OpenSSL/zlib DLLs from vcpkg
+          cp "$env:DEPS_DIR\lib\ssl-*.dll" staging\ -ErrorAction SilentlyContinue
+          cp "$env:DEPS_DIR\lib\crypto-*.dll" staging\ -ErrorAction SilentlyContinue
+          cp "$env:DEPS_DIR\lib\z*.dll" staging\ -ErrorAction SilentlyContinue
+          # Resources
+          cp -r resources staging\resources
+          Write-Host "=== Staging contents ==="
+          Get-ChildItem staging -Recurse -Name
+
+      - name: Build Windows installer
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
       - name: Upload Windows artifact
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: JsNetwork-windows
-          path: build/JsNetwork-*.exe
+          path: installer/Output/JsNetwork-*.exe
 
   build-macos:
     needs: build-windows
