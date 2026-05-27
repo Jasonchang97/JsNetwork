@@ -29,15 +29,22 @@ jobs:
         shell: pwsh
         run: |
           vcpkg install openssl:x86-windows zlib:x86-windows
-          $vcpkgRoot = "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows"
-          echo "DEPS_DIR=$vcpkgRoot" >> $env:GITHUB_ENV
+          $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows"
+          echo "DEPS_DIR=$root" >> $env:GITHUB_ENV
+          Write-Host "=== lib contents ==="
+          Get-ChildItem "$root\lib" -Name
+          Write-Host "=== zlib headers ==="
+          Test-Path "$root\include\zlib.h"
 
       - name: Configure
         shell: bash
         run: |
+          VCPKG_ROOT=$(cygpath -m "$VCPKG_INSTALLATION_ROOT")
           cmake -B build -G "Visual Studio 17 2022" -A Win32 \
             -DQT5_DIR="${{ env.Qt5_DIR }}" \
             -DNPCAP_SDK_DIR="${{ env.NPCAP_SDK_DIR }}" \
+            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET=x86-windows \
             -DOPENSSL_DIR="${{ env.DEPS_DIR }}" \
             -DVCPKG_LIB_DIR="${{ env.DEPS_DIR }}" \
             -DBUILD_TESTS=ON
