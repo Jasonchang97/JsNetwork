@@ -133,17 +133,23 @@ jobs:
           # Replace launcher script with real binary (post-build creates .bin wrapper)
           cp build/JsNetwork.app/Contents/MacOS/JsNetwork.bin build/JsNetwork.app/Contents/MacOS/JsNetwork
           chmod +x build/JsNetwork.app/Contents/MacOS/JsNetwork
-          # Bundle Qt frameworks
-          "${{ env.QT_ROOT_DIR }}/bin/macdeployqt" build/JsNetwork.app -verbose=1
-          # Copy OpenSSL dylibs from vcpkg
+          # Bundle Qt frameworks (ignore non-fatal SQL driver warnings)
+          "${{ env.QT_ROOT_DIR }}/bin/macdeployqt" build/JsNetwork.app -verbose=1 || true
+          # Find and copy OpenSSL dylibs from vcpkg
           mkdir -p build/JsNetwork.app/Contents/Frameworks
-          cp "$DEPS_DIR/lib/libssl.3.dylib" build/JsNetwork.app/Contents/Frameworks/ 2>/dev/null || cp "$DEPS_DIR/lib/libssl.dylib" build/JsNetwork.app/Contents/Frameworks/
-          cp "$DEPS_DIR/lib/libcrypto.3.dylib" build/JsNetwork.app/Contents/Frameworks/ 2>/dev/null || cp "$DEPS_DIR/lib/libcrypto.dylib" build/JsNetwork.app/Contents/Frameworks/
-          # Fix rpath for OpenSSL
-          install_name_tool -change "$DEPS_DIR/lib/libssl.3.dylib" "@executable_path/../Frameworks/libssl.3.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
-          install_name_tool -change "$DEPS_DIR/lib/libcrypto.3.dylib" "@executable_path/../Frameworks/libcrypto.3.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
-          install_name_tool -change "$DEPS_DIR/lib/libssl.dylib" "@executable_path/../Frameworks/libssl.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
-          install_name_tool -change "$DEPS_DIR/lib/libcrypto.dylib" "@executable_path/../Frameworks/libcrypto.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
+          SSL_DYLIB=$(find "$DEPS_DIR/lib" -name "libssl*" -type f | head -1)
+          CRYPTO_DYLIB=$(find "$DEPS_DIR/lib" -name "libcrypto*" -type f | head -1)
+          if [ -n "$SSL_DYLIB" ]; then
+            cp "$SSL_DYLIB" build/JsNetwork.app/Contents/Frameworks/
+            SSL_NAME=$(basename "$SSL_DYLIB")
+            otool -L build/JsNetwork.app/Contents/MacOS/JsNetwork | grep ssl
+            install_name_tool -change "$SSL_DYLIB" "@executable_path/../Frameworks/$SSL_NAME" build/JsNetwork.app/Contents/MacOS/JsNetwork || true
+          fi
+          if [ -n "$CRYPTO_DYLIB" ]; then
+            cp "$CRYPTO_DYLIB" build/JsNetwork.app/Contents/Frameworks/
+            CRYPTO_NAME=$(basename "$CRYPTO_DYLIB")
+            install_name_tool -change "$CRYPTO_DYLIB" "@executable_path/../Frameworks/$CRYPTO_NAME" build/JsNetwork.app/Contents/MacOS/JsNetwork || true
+          fi
           # Ad-hoc code sign
           codesign --force --deep --sign - build/JsNetwork.app
 
