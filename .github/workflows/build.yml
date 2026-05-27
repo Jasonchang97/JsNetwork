@@ -50,18 +50,16 @@ jobs:
         shell: bash
         run: cd build && ctest -C Release --output-on-failure
 
-      - name: Package Windows artifact
+      - name: Package Windows installer
         if: startsWith(github.ref, 'refs/tags/')
-        shell: pwsh
-        run: |
-          Compress-Archive -Path build/Release/* -DestinationPath JsNetwork-windows.zip
+        run: cd build && cpack -G NSIS -C Release
 
       - name: Upload Windows artifact
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
           name: JsNetwork-windows
-          path: JsNetwork-windows.zip
+          path: build/JsNetwork-*.exe
 
   build-macos:
     needs: build-windows
@@ -135,5 +133,5 @@ jobs:
           prerelease: true
           generate_release_notes: true
           files: |
-            JsNetwork-windows.zip
+            JsNetwork-*.exe
             JsNetwork-macOS.dmg
