@@ -31,20 +31,28 @@ jobs:
           vcpkg install openssl:x86-windows zlib:x86-windows
           $root = "$env:VCPKG_INSTALLATION_ROOT\installed\x86-windows"
           echo "DEPS_DIR=$root" >> $env:GITHUB_ENV
-          Write-Host "=== lib contents ==="
-          Get-ChildItem "$root\lib" -Name
-          Write-Host "=== zlib headers ==="
-          Test-Path "$root\include\zlib.h"
+
+      - name: Debug vcpkg paths
+        shell: pwsh
+        run: |
+          Write-Host "DEPS_DIR = $env:DEPS_DIR"
+          Write-Host "VCPKG_INSTALLATION_ROOT = $env:VCPKG_INSTALLATION_ROOT"
+          $libDir = "$env:DEPS_DIR\lib"
+          if (Test-Path $libDir) {
+            Write-Host "=== Files in $libDir ==="
+            Get-ChildItem $libDir -Name
+          } else {
+            Write-Host "ERROR: $libDir does not exist!"
+            Write-Host "=== Searching for zlib.lib ==="
+            Get-ChildItem "$env:VCPKG_INSTALLATION_ROOT" -Recurse -Filter "zlib.lib" -ErrorAction SilentlyContinue | Select-Object FullName
+          }
 
       - name: Configure
         shell: bash
         run: |
-          VCPKG_ROOT=$(cygpath -m "$VCPKG_INSTALLATION_ROOT")
           cmake -B build -G "Visual Studio 17 2022" -A Win32 \
             -DQT5_DIR="${{ env.Qt5_DIR }}" \
             -DNPCAP_SDK_DIR="${{ env.NPCAP_SDK_DIR }}" \
-            -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
-            -DVCPKG_TARGET_TRIPLET=x86-windows \
             -DOPENSSL_DIR="${{ env.DEPS_DIR }}" \
             -DVCPKG_LIB_DIR="${{ env.DEPS_DIR }}" \
             -DBUILD_TESTS=ON

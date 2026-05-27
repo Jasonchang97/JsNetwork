@@ -107,6 +107,19 @@ if(WIN32)
     endif()
 endif()
 
+# Link directories (must be before add_executable)
+if(OPENSSL_DIR)
+    message(STATUS "OPENSSL_DIR = ${OPENSSL_DIR}")
+    link_directories(${OPENSSL_DIR}/lib)
+endif()
+
+if(WIN32 AND VCPKG_LIB_DIR)
+    message(STATUS "VCPKG_LIB_DIR = ${VCPKG_LIB_DIR}")
+    message(STATUS "  include: ${VCPKG_LIB_DIR}/include")
+    message(STATUS "  lib: ${VCPKG_LIB_DIR}/lib")
+    link_directories(${VCPKG_LIB_DIR}/lib)
+endif()
+
 # Platform-specific executable
 if(APPLE)
     add_executable(${PROJECT_NAME} MACOSX_BUNDLE ${SOURCES} ${HEADERS} ${ICON_RESOURCE})
@@ -127,12 +140,10 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 if(OPENSSL_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE ${OPENSSL_DIR}/include)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${OPENSSL_DIR}/lib)
 endif()
 
 if(WIN32 AND VCPKG_LIB_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE ${VCPKG_LIB_DIR}/include)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${VCPKG_LIB_DIR}/lib)
 endif()
 
 if(WIN32 AND DEFINED NPCAP_SDK_DIR AND NPCAP_SDK_DIR)
@@ -288,7 +299,6 @@ if(BUILD_TESTS)
 
     if(WIN32 AND VCPKG_LIB_DIR)
         target_include_directories(jsnetwork_tests PRIVATE ${VCPKG_LIB_DIR}/include)
-        target_link_directories(jsnetwork_tests PRIVATE ${VCPKG_LIB_DIR}/lib)
     endif()
 
     target_link_libraries(jsnetwork_tests PRIVATE
