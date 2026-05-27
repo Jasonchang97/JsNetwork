@@ -286,6 +286,11 @@ if(BUILD_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/src
     )
 
+    if(WIN32 AND VCPKG_LIB_DIR)
+        target_include_directories(jsnetwork_tests PRIVATE ${VCPKG_LIB_DIR}/include)
+        target_link_directories(jsnetwork_tests PRIVATE ${VCPKG_LIB_DIR}/lib)
+    endif()
+
     target_link_libraries(jsnetwork_tests PRIVATE
         Qt5::Core
         Qt5::Gui

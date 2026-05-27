@@ -29,6 +29,16 @@ jobs:
         shell: bash
         run: choco install openssl -y --no-progress
 
+      - name: Install zlib
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://zlib.net/zlib131.zip" -OutFile zlib.zip
+          Expand-Archive -Path zlib.zip -DestinationPath C:\zlib-src
+          cd C:\zlib-src\zlib-1.3.1
+          cmake -B build -G "Visual Studio 17 2022" -A Win32
+          cmake --build build --config Release
+          cmake --install build --prefix C:/zlib
+
       - name: Configure
         shell: bash
         run: |
@@ -36,6 +46,7 @@ jobs:
             -DQT5_DIR="${{ env.Qt5_DIR }}" \
             -DNPCAP_SDK_DIR="${{ env.NPCAP_SDK_DIR }}" \
             -DOPENSSL_DIR="C:/Program Files/OpenSSL-Win32" \
+            -DVCPKG_LIB_DIR="C:/zlib" \
             -DBUILD_TESTS=ON
 
       - name: Build
@@ -46,7 +57,7 @@ jobs:
         run: cd build && ctest -C Release --output-on-failure
 
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
@@ -63,6 +74,7 @@ jobs:
       - name: Configure
         run: |
           cmake -B build \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DQT5_DIR="${{ env.Qt5_DIR }}" \
             -DOPENSSL_DIR="$(brew --prefix openssl@1.1)" \
             -DPCAP_DIR="$(brew --prefix libpcap)" \
