@@ -189,6 +189,15 @@ jobs:
         with:
           name: JsNetwork-macOS
 
+      - name: Clean up existing releases for this tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          for id in $(gh api "repos/${{ github.repository }}/releases" --jq ".[] | select(.tag_name==\"$TAG\") | .id" 2>/dev/null); do
+            gh api -X DELETE "repos/${{ github.repository }}/releases/$id" 2>/dev/null || true
+          done
+
       - name: Create Pre-Release
         uses: softprops/action-gh-release@v2
         with:
