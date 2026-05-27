@@ -72,10 +72,10 @@ jobs:
           # Npcap DLLs
           cp "$rel\wpcap.dll" staging\ -ErrorAction SilentlyContinue
           cp "$rel\Packet.dll" staging\ -ErrorAction SilentlyContinue
-          # OpenSSL/zlib DLLs from vcpkg
-          cp "$env:DEPS_DIR\lib\ssl-*.dll" staging\ -ErrorAction SilentlyContinue
-          cp "$env:DEPS_DIR\lib\crypto-*.dll" staging\ -ErrorAction SilentlyContinue
-          cp "$env:DEPS_DIR\lib\z*.dll" staging\ -ErrorAction SilentlyContinue
+          # OpenSSL/zlib runtime DLLs from vcpkg bin directory
+          foreach ($dll in (Get-ChildItem "$env:DEPS_DIR\bin\libcrypto*.dll","$env:DEPS_DIR\bin\libssl*.dll","$env:DEPS_DIR\bin\zlib*.dll","$env:DEPS_DIR\bin\z*.dll" -ErrorAction SilentlyContinue)) { cp $dll.FullName staging\ }
+          Write-Host "=== vcpkg bin contents ==="
+          Get-ChildItem "$env:DEPS_DIR\bin" -Name
           # Resources
           cp -r resources staging\resources
           Write-Host "=== Staging contents ==="
@@ -126,6 +126,26 @@ jobs:
 
       - name: Run Tests
         run: cd build && ctest --output-on-failure
+
+      - name: Bundle Qt frameworks and dependencies
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          # Replace launcher script with real binary (post-build creates .bin wrapper)
+          cp build/JsNetwork.app/Contents/MacOS/JsNetwork.bin build/JsNetwork.app/Contents/MacOS/JsNetwork
+          chmod +x build/JsNetwork.app/Contents/MacOS/JsNetwork
+          # Bundle Qt frameworks
+          "${{ env.QT_ROOT_DIR }}/bin/macdeployqt" build/JsNetwork.app -verbose=1
+          # Copy OpenSSL dylibs from vcpkg
+          mkdir -p build/JsNetwork.app/Contents/Frameworks
+          cp "$DEPS_DIR/lib/libssl.3.dylib" build/JsNetwork.app/Contents/Frameworks/ 2>/dev/null || cp "$DEPS_DIR/lib/libssl.dylib" build/JsNetwork.app/Contents/Frameworks/
+          cp "$DEPS_DIR/lib/libcrypto.3.dylib" build/JsNetwork.app/Contents/Frameworks/ 2>/dev/null || cp "$DEPS_DIR/lib/libcrypto.dylib" build/JsNetwork.app/Contents/Frameworks/
+          # Fix rpath for OpenSSL
+          install_name_tool -change "$DEPS_DIR/lib/libssl.3.dylib" "@executable_path/../Frameworks/libssl.3.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
+          install_name_tool -change "$DEPS_DIR/lib/libcrypto.3.dylib" "@executable_path/../Frameworks/libcrypto.3.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
+          install_name_tool -change "$DEPS_DIR/lib/libssl.dylib" "@executable_path/../Frameworks/libssl.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
+          install_name_tool -change "$DEPS_DIR/lib/libcrypto.dylib" "@executable_path/../Frameworks/libcrypto.dylib" build/JsNetwork.app/Contents/MacOS/JsNetwork 2>/dev/null || true
+          # Ad-hoc code sign
+          codesign --force --deep --sign - build/JsNetwork.app
 
       - name: Package macOS artifact
         if: startsWith(github.ref, 'refs/tags/')
