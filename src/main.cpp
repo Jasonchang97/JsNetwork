@@ -117,8 +117,26 @@ static LONG WINAPI detailedCrashHandler(EXCEPTION_POINTERS *exInfo) {
             mei.ExceptionPointers = exInfo;
             mei.ClientPointers = FALSE;
 
-            HANDLE hFile = CreateFileW(dumpPath, GENERIC_WRITE, 0, nullptr,
-                                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            // Try AppData path first, then temp directory as fallback
+            HANDLE hFile = CreateFileW(dumpPath, GENERIC_WRITE,
+                                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                       nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile == INVALID_HANDLE_VALUE) {
+                // Fallback: try temp directory
+                wchar_t tmpPath[MAX_PATH];
+                if (GetTempPathW(MAX_PATH, tmpPath) > 0) {
+                    wcscat_s(tmpPath, L"JsNetwork_crash.dmp");
+                    hFile = CreateFileW(tmpPath, GENERIC_WRITE,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                    if (hFile != INVALID_HANDLE_VALUE) {
+                        char noteBuf[256];
+                        _snprintf_s(noteBuf, sizeof(noteBuf), _TRUNCATE,
+                            "Dump written to temp: %ls\r\n", tmpPath);
+                        rawCrashLog(logPath, noteBuf);
+                    }
+                }
+            }
             if (hFile != INVALID_HANDLE_VALUE) {
                 BOOL ok = pMiniDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
                                     MiniDumpNormal, &mei, nullptr, nullptr);
@@ -132,7 +150,11 @@ static LONG WINAPI detailedCrashHandler(EXCEPTION_POINTERS *exInfo) {
                 FlushFileBuffers(hFile);
                 CloseHandle(hFile);
             } else {
-                rawCrashLog(logPath, "CreateFile for crash.dmp FAILED\r\n");
+                DWORD err = GetLastError();
+                char errBuf[128];
+                _snprintf_s(errBuf, sizeof(errBuf), _TRUNCATE,
+                    "CreateFile for crash.dmp FAILED, GetLastError=%lu\r\n", err);
+                rawCrashLog(logPath, errBuf);
             }
         } else {
             rawCrashLog(logPath, "GetProcAddress(MiniDumpWriteDump) FAILED\r\n");
