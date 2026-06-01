@@ -85,6 +85,8 @@ static LONG WINAPI detailedCrashHandler(EXCEPTION_POINTERS *exInfo) {
             CloseHandle(hFile);
         }
     }
+    // Terminate after writing dump - can't safely continue after access violation
+    TerminateProcess(GetCurrentProcess(), 139);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
