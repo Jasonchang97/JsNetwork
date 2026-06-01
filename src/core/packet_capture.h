@@ -111,6 +111,8 @@ public:
     void stop();
     bool isRunning() const;
 
+    static QStringList availableInterfaces();
+
 signals:
     void requestCaptured(const RequestItem &item);
     void captureStatusChanged(const QString &message);

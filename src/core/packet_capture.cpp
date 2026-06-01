@@ -59,6 +59,12 @@ bool PacketCapture::isRunning() const
     return m_wfpCapture && m_wfpCapture->isRunning();
 }
 
+QStringList PacketCapture::availableInterfaces()
+{
+    // WinDivert captures all interfaces at WFP level — no enumeration needed
+    return {};
+}
+
 #else
 // ============================================================================
 // macOS: pcap-based capture
