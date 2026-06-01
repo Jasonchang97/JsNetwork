@@ -209,8 +209,9 @@ void Application::start()
     if (m_certManager->isReady()) {
         // NOTE: preGenerateCerts disabled for crash diagnosis — background RSA key gen
         // may corrupt OpenSSL state when concurrent with MITM connections
-        // m_certManager->preGenerateCerts({
-        //     "www.google.com", "google.com",
+#if 0
+        m_certManager->preGenerateCerts({
+            "www.google.com", "google.com",
             "accounts.google.com", "apis.google.com",
             "mail.google.com", "drive.google.com",
             "translate.google.com", "maps.google.com",
@@ -255,7 +256,8 @@ void Application::start()
             "fls-na.amazon.com",
             "xp.apple.com", "gs.apple.com",
             "swcdn.apple.com", "swdist.apple.com",
-        // });  // end of disabled preGenerateCerts
+        });
+#endif
         m_proxyServer->enableMitm(m_certManager.get());
         logMsg("MITM auto-enabled (HTTPS decrypt active)");
     } else {
@@ -285,6 +287,13 @@ void Application::start()
     installLspIfNeeded();
 #endif
 
+    // Save m_mainWindow pointer to a volatile stack local BEFORE any calls
+    // that clobber the callee-saved EBX register (which holds `this` on x86 MSVC).
+    // A callee between here and show() violates the x86 ABI by corrupting EBX.
+    // By reading the pointer now (while EBX is valid) and storing it volatile,
+    // the compiler emits a stack spill that survives the corruption.
+    MainWindow *volatile mainWin = m_mainWindow.get();
+
     if (m_packetCapture->start()) {
         logMsg("Packet capture started");
     } else {
@@ -292,7 +301,7 @@ void Application::start()
     }
 
     logMsg("About to show main window...");
-    m_mainWindow->show();
+    mainWin->show();
     logMsg("Main window shown, entering event loop");
 }
 
