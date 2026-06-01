@@ -11,6 +11,7 @@
 
 #ifdef Q_OS_WIN
 #include <windows.h>
+#include <dbghelp.h>
 #endif
 
 static void crashLog(const QString &msg) {
