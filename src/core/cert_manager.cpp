@@ -135,18 +135,18 @@ bool CertManager::generateCA()
         return false;
     }
 
-    // Save CA cert to disk
-    FILE *f = fopen(m_caCertPath.toUtf8().constData(), "w");
-    if (f) {
-        PEM_write_X509(f, cert);
-        fclose(f);
+    // Save CA cert to disk (use BIO to avoid OPENSSL_Applink requirement)
+    BIO *bio = BIO_new_file(m_caCertPath.toUtf8().constData(), "w");
+    if (bio) {
+        PEM_write_bio_X509(bio, cert);
+        BIO_free(bio);
     }
 
     // Save CA key to disk
-    f = fopen(m_caKeyPath.toUtf8().constData(), "w");
-    if (f) {
-        PEM_write_PrivateKey(f, pkey, nullptr, nullptr, 0, nullptr, nullptr);
-        fclose(f);
+    bio = BIO_new_file(m_caKeyPath.toUtf8().constData(), "w");
+    if (bio) {
+        PEM_write_bio_PrivateKey(bio, pkey, nullptr, nullptr, 0, nullptr, nullptr);
+        BIO_free(bio);
     }
 
     // Set permissions on key file
@@ -161,18 +161,18 @@ bool CertManager::generateCA()
 
 bool CertManager::loadCA()
 {
-    // Load CA certificate
-    FILE *f = fopen(m_caCertPath.toUtf8().constData(), "r");
-    if (!f) return false;
-    m_caCert = PEM_read_X509(f, nullptr, nullptr, nullptr);
-    fclose(f);
+    // Load CA certificate (use BIO to avoid OPENSSL_Applink requirement)
+    BIO *bio = BIO_new_file(m_caCertPath.toUtf8().constData(), "r");
+    if (!bio) return false;
+    m_caCert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
     if (!m_caCert) return false;
 
     // Load CA private key
-    f = fopen(m_caKeyPath.toUtf8().constData(), "r");
-    if (!f) return false;
-    m_caKey = PEM_read_PrivateKey(f, nullptr, nullptr, nullptr);
-    fclose(f);
+    bio = BIO_new_file(m_caKeyPath.toUtf8().constData(), "r");
+    if (!bio) return false;
+    m_caKey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
     if (!m_caKey) return false;
 
     return true;
