@@ -61,13 +61,14 @@ static void installCleanupHandlers()
     std::atexit(cleanupProxy);
     std::signal(SIGTERM, signalHandler);
     std::signal(SIGINT, signalHandler);
-    std::signal(SIGSEGV, signalHandler);
     std::signal(SIGABRT, signalHandler);
 #ifndef Q_OS_WIN
+    std::signal(SIGSEGV, signalHandler);
     std::signal(SIGQUIT, signalHandler);
     std::signal(SIGHUP, signalHandler);
 #endif
-    // Note: SetUnhandledExceptionFilter is in main.cpp (detailedCrashHandler)
+    // On Windows, SIGSEGV is NOT handled here so the SEH handler in main.cpp
+    // (detailedCrashHandler) can catch it and write a minidump + crash log.
 }
 
 Application::Application(QObject *parent)
