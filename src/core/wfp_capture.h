@@ -1,7 +1,5 @@
 #pragma once
 
-#if defined(Q_OS_WIN) || defined(Q_MOC_RUN)
-
 #include <QObject>
 #include <QThread>
 #include <QByteArray>
@@ -97,10 +95,11 @@ private:
     int m_packetCount = 0;
 };
 
-// WinDivert function pointer types
+// WinDivert function pointer types (WINAPI = __stdcall on x86, no-op on x64)
 #ifndef WINAPI
-#define WINAPI
+#define WINAPI __stdcall
 #endif
+
 typedef void* HANDLE_WD;
 
 typedef HANDLE_WD (WINAPI *WinDivertOpenFn)(const char *, int, short, unsigned long long);
@@ -149,5 +148,3 @@ private:
     WfpCaptureThread *m_thread = nullptr;
     void *m_wdHandle = nullptr;
 };
-
-#endif // Q_OS_WIN || Q_MOC_RUN
