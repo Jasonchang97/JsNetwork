@@ -264,6 +264,22 @@ if(WIN32)
             "${QT5_ROOT_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
     )
 
+    # Copy OpenSSL and zlib runtime DLLs
+    foreach(_deps_dir IN ITEMS "${OPENSSL_DIR}" "${VCPKG_LIB_DIR}")
+        if(_deps_dir AND EXISTS "${_deps_dir}/bin")
+            file(GLOB _ssl_runtime_dlls "${_deps_dir}/bin/libssl*.dll" "${_deps_dir}/bin/ssl*.dll")
+            file(GLOB _crypto_runtime_dlls "${_deps_dir}/bin/libcrypto*.dll" "${_deps_dir}/bin/crypto*.dll")
+            file(GLOB _zlib_runtime_dlls "${_deps_dir}/bin/zlib*.dll")
+            foreach(_dll ${_ssl_runtime_dlls} ${_crypto_runtime_dlls} ${_zlib_runtime_dlls})
+                add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${_dll}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+                )
+            endforeach()
+            break()
+        endif()
+    endforeach()
+
     # Copy WinDivert DLL and driver files
     set(WINDIVERT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/windivert")
     if(CMAKE_SIZEOF_VOID_P EQUAL 8)
