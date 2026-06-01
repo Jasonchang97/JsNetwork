@@ -207,8 +207,10 @@ void Application::start()
     initCertificate();
 
     if (m_certManager->isReady()) {
-        m_certManager->preGenerateCerts({
-            "www.google.com", "google.com",
+        // NOTE: preGenerateCerts disabled for crash diagnosis — background RSA key gen
+        // may corrupt OpenSSL state when concurrent with MITM connections
+        // m_certManager->preGenerateCerts({
+        //     "www.google.com", "google.com",
             "accounts.google.com", "apis.google.com",
             "mail.google.com", "drive.google.com",
             "translate.google.com", "maps.google.com",
@@ -253,7 +255,7 @@ void Application::start()
             "fls-na.amazon.com",
             "xp.apple.com", "gs.apple.com",
             "swcdn.apple.com", "swdist.apple.com",
-        });
+        // });  // end of disabled preGenerateCerts
         m_proxyServer->enableMitm(m_certManager.get());
         logMsg("MITM auto-enabled (HTTPS decrypt active)");
     } else {
