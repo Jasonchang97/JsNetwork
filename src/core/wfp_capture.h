@@ -8,18 +8,6 @@
 #include <QDateTime>
 #include "model/request_item.h"
 
-#ifdef Q_OS_WIN
-#include <winsock2.h>
-#include <windows.h>
-#endif
-
-// Forward declarations for WinDivert types
-struct _WINDIVERT_IPHDR;
-struct _WINDIVERT_IPV6HDR;
-struct _WINDIVERT_TCPHDR;
-struct _WINDIVERT_UDPHDR;
-struct _WINDIVERT_ADDRESS;
-
 // TCP stream reassembly buffer
 struct WfpTcpStream {
     QByteArray requestData;
@@ -63,39 +51,7 @@ struct WfpConnKey {
     }
 };
 
-// Forward declare WinDivertApi (defined below)
-struct WinDivertApi;
-
-class WfpCaptureThread : public QThread {
-    Q_OBJECT
-public:
-    WfpCaptureThread(void *handle, const WinDivertApi *api, QObject *parent = nullptr);
-    void run() override;
-    void requestStop();
-
-signals:
-    void httpCaptured(const RequestItem &item);
-
-private:
-    void processTcpPacket(const _WINDIVERT_IPHDR *ipHdr, const _WINDIVERT_TCPHDR *tcpHdr,
-                          const quint8 *payload, unsigned int payloadLen, bool outbound);
-    void processTcpPacketV6(const _WINDIVERT_IPV6HDR *ip6Hdr, const _WINDIVERT_TCPHDR *tcpHdr,
-                            const quint8 *payload, unsigned int payloadLen, bool outbound);
-    void checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream);
-    void emitStaleStreams();
-    static QString extractSniFromClientHello(const QByteArray &data);
-
-    void *m_handle;
-    const WinDivertApi *m_api;
-    volatile bool m_stopRequested = false;
-
-    QMap<WfpConnKey, WfpTcpStream> m_streams;
-    QMutex m_mutex;
-    int m_nextId = 1;
-    int m_packetCount = 0;
-};
-
-// WinDivert function pointer types (WINAPI = __stdcall on x86, no-op on x64)
+// WinDivert function pointer types (no WinDivert types in signatures)
 #ifndef WINAPI
 #define WINAPI __stdcall
 #endif
@@ -103,12 +59,12 @@ private:
 typedef void* HANDLE_WD;
 
 typedef HANDLE_WD (WINAPI *WinDivertOpenFn)(const char *, int, short, unsigned long long);
-typedef int (WINAPI *WinDivertRecvFn)(HANDLE_WD, void *, unsigned int, unsigned int *, _WINDIVERT_ADDRESS *);
+typedef int (WINAPI *WinDivertRecvFn)(HANDLE_WD, void *, unsigned int, unsigned int *, void *);
 typedef int (WINAPI *WinDivertCloseFn)(HANDLE_WD);
 typedef int (WINAPI *WinDivertShutdownFn)(HANDLE_WD, int);
 typedef int (WINAPI *WinDivertHelperParsePacketFn)(const void *, unsigned int,
-    _WINDIVERT_IPHDR **, _WINDIVERT_IPV6HDR **, unsigned char *,
-    void *, void *, _WINDIVERT_TCPHDR **, _WINDIVERT_UDPHDR **,
+    void **, void **, unsigned char *,
+    void *, void *, void **, void **,
     void **, unsigned int *, void **, unsigned int *);
 typedef int (WINAPI *WinDivertHelperFormatIPv4AddressFn)(unsigned int, char *, unsigned int);
 typedef int (WINAPI *WinDivertHelperFormatIPv6AddressFn)(const unsigned int *, char *, unsigned int);
@@ -122,6 +78,33 @@ struct WinDivertApi {
     WinDivertHelperFormatIPv4AddressFn formatIPv4 = nullptr;
     WinDivertHelperFormatIPv6AddressFn formatIPv6 = nullptr;
     bool loaded = false;
+};
+
+class WfpCaptureThread : public QThread {
+    Q_OBJECT
+public:
+    WfpCaptureThread(void *handle, const WinDivertApi *api, QObject *parent = nullptr);
+    void run() override;
+    void requestStop();
+
+signals:
+    void httpCaptured(const RequestItem &item);
+
+private:
+    void processTcpPacket(void *ipHdr, void *tcpHdr,
+                          const quint8 *payload, unsigned int payloadLen, bool outbound, bool isIpv6);
+    void checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream);
+    void emitStaleStreams();
+    static QString extractSniFromClientHello(const QByteArray &data);
+
+    void *m_handle;
+    const WinDivertApi *m_api;
+    volatile bool m_stopRequested = false;
+
+    QMap<WfpConnKey, WfpTcpStream> m_streams;
+    QMutex m_mutex;
+    int m_nextId = 1;
+    int m_packetCount = 0;
 };
 
 class WfpCapture : public QObject

@@ -16,7 +16,6 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 
-// Include WinDivert header with custom import macro
 #define WINDIVERTEXPORT
 #include "WinDivert.h"
 
@@ -41,11 +40,6 @@ WfpCaptureThread::WfpCaptureThread(void *handle, const WinDivertApi *api, QObjec
 void WfpCaptureThread::requestStop()
 {
     m_stopRequested = true;
-    if (m_handle) {
-        // WinDivert shutdown will unblock the recv call
-        // We cast to the function pointer type via the DLL handle
-        // The actual shutdown is done in WfpCapture::stop()
-    }
 }
 
 void WfpCaptureThread::run()
@@ -62,23 +56,21 @@ void WfpCaptureThread::run()
         memset(&addr, 0, sizeof(addr));
         recvLen = 0;
 
-        BOOL ok = m_api->recv(m_handle, packet, sizeof(packet), &recvLen, &addr);
+        int ok = m_api->recv(m_handle, packet, sizeof(packet), &recvLen, &addr);
         if (!ok) {
             if (m_stopRequested) break;
             DWORD err = GetLastError();
-            if (err == 995 || err == 1229) break;  // ERROR_OPERATION_ABORTED / shutdown
+            if (err == 995 || err == 1229) break;
             continue;
         }
         if (recvLen == 0) continue;
 
         m_packetCount++;
 
-        // Periodically emit stale streams
         if ((m_packetCount & 0x1F) == 0) {
             emitStaleStreams();
         }
 
-        // Parse the packet
         WINDIVERT_IPHDR *ipHdr = nullptr;
         WINDIVERT_IPV6HDR *ip6Hdr = nullptr;
         WINDIVERT_TCPHDR *tcpHdr = nullptr;
@@ -87,39 +79,34 @@ void WfpCaptureThread::run()
         PVOID payload = nullptr;
         UINT payloadLen = 0;
 
-        m_api->parsePacket(packet, recvLen, &ipHdr, &ip6Hdr, &protocol,
-                nullptr, nullptr, &tcpHdr, &udpHdr,
+        m_api->parsePacket(packet, recvLen,
+                (void **)&ipHdr, (void **)&ip6Hdr, &protocol,
+                nullptr, nullptr, (void **)&tcpHdr, (void **)&udpHdr,
                 &payload, &payloadLen, nullptr, nullptr);
 
         bool outbound = (addr.Outbound != 0);
         bool loopback = (addr.Loopback != 0);
 
-        // Skip loopback traffic to port 9527 (our proxy)
         if (loopback) {
             if (tcpHdr) {
                 UINT16 srcPort = ntohs(tcpHdr->SrcPort);
                 UINT16 dstPort = ntohs(tcpHdr->DstPort);
-                if (srcPort == 9527 || dstPort == 9527) {
-                    continue;
-                }
+                if (srcPort == 9527 || dstPort == 9527) continue;
             }
             if (udpHdr) {
                 UINT16 srcPort = ntohs(udpHdr->SrcPort);
                 UINT16 dstPort = ntohs(udpHdr->DstPort);
-                if (srcPort == 9527 || dstPort == 9527) {
-                    continue;
-                }
+                if (srcPort == 9527 || dstPort == 9527) continue;
             }
         }
 
         if (tcpHdr && payloadLen > 0) {
             if (ipHdr) {
-                processTcpPacket(ipHdr, tcpHdr, (const quint8 *)payload, payloadLen, outbound);
+                processTcpPacket(ipHdr, tcpHdr, (const quint8 *)payload, payloadLen, outbound, false);
             } else if (ip6Hdr) {
-                processTcpPacketV6(ip6Hdr, tcpHdr, (const quint8 *)payload, payloadLen, outbound);
+                processTcpPacket(ip6Hdr, tcpHdr, (const quint8 *)payload, payloadLen, outbound, true);
             }
         } else if (tcpHdr && (tcpHdr->Fin || tcpHdr->Rst)) {
-            // FIN/RST with no payload - check for stream completion
             char srcBuf[64], dstBuf[64];
             if (ipHdr) {
                 m_api->formatIPv4(ipHdr->SrcAddr, srcBuf, sizeof(srcBuf));
@@ -141,7 +128,6 @@ void WfpCaptureThread::run()
         }
     }
 
-    // Emit remaining streams
     QMutexLocker lock(&m_mutex);
     for (auto it = m_streams.begin(); it != m_streams.end(); ++it) {
         WfpTcpStream &stream = it.value();
@@ -175,84 +161,30 @@ void WfpCaptureThread::run()
     wfpLog("WfpCaptureThread::run() stopped, packets=" + QString::number(m_packetCount));
 }
 
-void WfpCaptureThread::processTcpPacket(const WINDIVERT_IPHDR *ipHdr,
-                                         const WINDIVERT_TCPHDR *tcpHdr,
+void WfpCaptureThread::processTcpPacket(void *ipHdrVoid, void *tcpHdrVoid,
                                          const quint8 *payload, unsigned int payloadLen,
-                                         bool outbound)
+                                         bool outbound, bool isIpv6)
 {
     char srcBuf[64], dstBuf[64];
-    if (!m_api->formatIPv4) return;
-    m_api->formatIPv4(ipHdr->SrcAddr, srcBuf, sizeof(srcBuf));
-    m_api->formatIPv4(ipHdr->DstAddr, dstBuf, sizeof(dstBuf));
+    UINT16 srcPort, dstPort;
+    UINT32 seqNum;
 
-    UINT16 srcPort = ntohs(tcpHdr->SrcPort);
-    UINT16 dstPort = ntohs(tcpHdr->DstPort);
+    auto *tcpHdr = static_cast<const WINDIVERT_TCPHDR *>(tcpHdrVoid);
+    srcPort = ntohs(tcpHdr->SrcPort);
+    dstPort = ntohs(tcpHdr->DstPort);
+    seqNum = ntohl(tcpHdr->SeqNum);
 
-    bool isHttps = (dstPort == 443 || srcPort == 443 ||
-                    dstPort == 8443 || srcPort == 8443 ||
-                    dstPort == 9443 || srcPort == 9443);
-
-    WfpConnKey key = WfpConnKey::canonical(QString(srcBuf), srcPort, QString(dstBuf), dstPort);
-    bool clientToServer = (key.clientIp == QString(srcBuf) && key.clientPort == srcPort);
-
-    quint32 seqNum = ntohl(tcpHdr->SeqNum);
-
-    QMutexLocker lock(&m_mutex);
-    WfpTcpStream &stream = m_streams[key];
-
-    if (stream.startTime == 0) {
-        stream.startTime = QDateTime::currentMSecsSinceEpoch();
-        stream.srcIp = key.clientIp;
-        stream.srcPort = key.clientPort;
-        stream.dstIp = key.serverIp;
-        stream.dstPort = key.serverPort;
-        stream.isHttps = isHttps;
-    }
-
-    if (clientToServer) {
-        if (isHttps && stream.sniHost.isEmpty()) {
-            stream.sniHost = extractSniFromClientHello(QByteArray((const char *)payload, payloadLen));
-        }
-        if (!stream.clientSeqInit) {
-            stream.clientSeq = seqNum;
-            stream.clientSeqInit = true;
-            stream.requestData.append((const char *)payload, payloadLen);
-        } else {
-            quint32 expected = stream.clientSeq + (quint32)stream.requestData.size();
-            quint32 diff = seqNum - expected;
-            if (diff < 0x80000000u || seqNum == stream.clientSeq) {
-                stream.requestData.append((const char *)payload, payloadLen);
-            }
-        }
+    if (isIpv6) {
+        auto *ip6Hdr = static_cast<const WINDIVERT_IPV6HDR *>(ipHdrVoid);
+        if (!m_api->formatIPv6) return;
+        m_api->formatIPv6(ip6Hdr->SrcAddr, srcBuf, sizeof(srcBuf));
+        m_api->formatIPv6(ip6Hdr->DstAddr, dstBuf, sizeof(dstBuf));
     } else {
-        if (!stream.serverSeqInit) {
-            stream.serverSeq = seqNum;
-            stream.serverSeqInit = true;
-            stream.responseData.append((const char *)payload, payloadLen);
-        } else {
-            quint32 expected = stream.serverSeq + (quint32)stream.responseData.size();
-            quint32 diff = seqNum - expected;
-            if (diff < 0x80000000u || seqNum == stream.serverSeq) {
-                stream.responseData.append((const char *)payload, payloadLen);
-            }
-        }
+        auto *ipHdr = static_cast<const WINDIVERT_IPHDR *>(ipHdrVoid);
+        if (!m_api->formatIPv4) return;
+        m_api->formatIPv4(ipHdr->SrcAddr, srcBuf, sizeof(srcBuf));
+        m_api->formatIPv4(ipHdr->DstAddr, dstBuf, sizeof(dstBuf));
     }
-
-    checkStreamComplete(key, stream);
-}
-
-void WfpCaptureThread::processTcpPacketV6(const WINDIVERT_IPV6HDR *ip6Hdr,
-                                           const WINDIVERT_TCPHDR *tcpHdr,
-                                           const quint8 *payload, unsigned int payloadLen,
-                                           bool outbound)
-{
-    char srcBuf[64], dstBuf[64];
-    if (!m_api->formatIPv6) return;
-    m_api->formatIPv6(ip6Hdr->SrcAddr, srcBuf, sizeof(srcBuf));
-    m_api->formatIPv6(ip6Hdr->DstAddr, dstBuf, sizeof(dstBuf));
-
-    UINT16 srcPort = ntohs(tcpHdr->SrcPort);
-    UINT16 dstPort = ntohs(tcpHdr->DstPort);
 
     bool isHttps = (dstPort == 443 || srcPort == 443 ||
                     dstPort == 8443 || srcPort == 8443 ||
@@ -260,8 +192,6 @@ void WfpCaptureThread::processTcpPacketV6(const WINDIVERT_IPV6HDR *ip6Hdr,
 
     WfpConnKey key = WfpConnKey::canonical(QString(srcBuf), srcPort, QString(dstBuf), dstPort);
     bool clientToServer = (key.clientIp == QString(srcBuf) && key.clientPort == srcPort);
-
-    quint32 seqNum = ntohl(tcpHdr->SeqNum);
 
     QMutexLocker lock(&m_mutex);
     WfpTcpStream &stream = m_streams[key];
@@ -309,11 +239,9 @@ void WfpCaptureThread::processTcpPacketV6(const WINDIVERT_IPV6HDR *ip6Hdr,
 
 void WfpCaptureThread::checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream)
 {
-    // Check if HTTP response is complete
     if (stream.requestData.isEmpty() || stream.responseData.isEmpty())
         return;
 
-    // Parse response to check completeness
     QByteArray respData = stream.responseData;
     int headerEnd = respData.indexOf("\r\n\r\n");
     if (headerEnd < 0) return;
@@ -334,7 +262,6 @@ void WfpCaptureThread::checkStreamComplete(const WfpConnKey &key, WfpTcpStream &
     } else if (headersStr.contains("Transfer-Encoding: chunked", Qt::CaseInsensitive)) {
         if (respData.endsWith("0\r\n\r\n")) complete = true;
     } else {
-        // No Content-Length and not chunked - assume complete if we have headers
         complete = true;
     }
 
@@ -367,7 +294,7 @@ void WfpCaptureThread::emitStaleStreams()
     qint64 now = QDateTime::currentMSecsSinceEpoch();
     QMutexLocker lock(&m_mutex);
     for (auto it = m_streams.begin(); it != m_streams.end(); ) {
-        if (now - it.value().startTime > 3000) {  // 3 second timeout
+        if (now - it.value().startTime > 3000) {
             WfpTcpStream &stream = it.value();
             if (!stream.requestData.isEmpty() || !stream.sniHost.isEmpty()) {
                 RequestItem item;
@@ -402,18 +329,17 @@ void WfpCaptureThread::emitStaleStreams()
 
 QString WfpCaptureThread::extractSniFromClientHello(const QByteArray &data)
 {
-    // Same SNI extraction logic as PacketCapture
     if (data.size() < 5) return {};
-    if ((quint8)data[0] != 0x16) return {};  // Not TLS handshake
-    if ((quint8)data[1] != 0x03 || (quint8)data[2] < 1) return {};  // Not TLS 1.x
+    if ((quint8)data[0] != 0x16) return {};
+    if ((quint8)data[1] != 0x03 || (quint8)data[2] < 1) return {};
 
-    int pos = 5;  // Skip TLS record header
+    int pos = 5;
     if (pos >= data.size()) return {};
-    if ((quint8)data[pos] != 0x01) return {};  // Not ClientHello
+    if ((quint8)data[pos] != 0x01) return {};
 
-    pos += 4;  // Skip handshake header
-    pos += 2;  // Skip version
-    pos += 32; // Skip random
+    pos += 4;
+    pos += 2;
+    pos += 32;
 
     if (pos >= data.size()) return {};
     int sessionIdLen = (quint8)data[pos++];
@@ -437,13 +363,13 @@ QString WfpCaptureThread::extractSniFromClientHello(const QByteArray &data)
         int extLen = ((quint8)data[pos + 2] << 8) | (quint8)data[pos + 3];
         pos += 4;
 
-        if (extType == 0x0000 && pos + extLen <= data.size()) {  // SNI extension
+        if (extType == 0x0000 && pos + extLen <= data.size()) {
             if (pos + 5 > data.size()) return {};
             int sniListLen = ((quint8)data[pos] << 8) | (quint8)data[pos + 1];
             int sniPos = pos + 2;
             if (sniPos + 3 > data.size()) return {};
             int sniType = (quint8)data[sniPos];
-            if (sniType == 0x00) {  // hostname
+            if (sniType == 0x00) {
                 int nameLen = ((quint8)data[sniPos + 1] << 8) | (quint8)data[sniPos + 2];
                 if (sniPos + 3 + nameLen <= data.size()) {
                     return QString::fromLatin1(data.mid(sniPos + 3, nameLen));
@@ -473,7 +399,6 @@ bool WfpCapture::loadWinDivert()
 {
     if (m_dllHandle) return true;
 
-    // Try loading from application directory first
     QString appDir = QCoreApplication::applicationDirPath();
     QString dllPath = appDir + "/WinDivert.dll";
 
@@ -522,18 +447,15 @@ bool WfpCapture::start()
         return false;
     }
 
-    // Open WinDivert handle: capture all TCP/UDP, sniff mode (read-only), no install check
-    // Filter excludes our proxy port 9527 on loopback
     const char *filter = "tcp or udp";
-    m_wdHandle = m_api.open(filter, 0 /* WINDIVERT_LAYER_NETWORK */, 0,
-                            WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
+    m_wdHandle = m_api.open(filter, 0, 0, WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
     if (!m_wdHandle || m_wdHandle == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
         wfpLog(QString("WinDivertOpen failed, error=%1").arg(err));
 
-        if (err == 5) {  // ERROR_ACCESS_DENIED
+        if (err == 5) {
             emit captureStatusChanged("WinDivert requires Administrator privileges");
-        } else if (err == 2) {  // ERROR_FILE_NOT_FOUND
+        } else if (err == 2) {
             emit captureStatusChanged("WinDivert driver not found. Ensure WinDivert.dll and WinDivert64.sys are in the app directory");
         } else {
             emit captureStatusChanged(QString("WinDivertOpen failed (error %1)").arg(err));
@@ -555,7 +477,7 @@ void WfpCapture::stop()
 {
     if (m_wdHandle && m_wdHandle != INVALID_HANDLE_VALUE) {
         if (m_api.shutdown) {
-            m_api.shutdown(m_wdHandle, 3 /* WINDIVERT_SHUTDOWN_BOTH */);
+            m_api.shutdown(m_wdHandle, 3);
         }
     }
 
@@ -581,7 +503,6 @@ bool WfpCapture::isRunning() const
 
 bool WfpCapture::isAvailable() const
 {
-    // Check if WinDivert.dll exists in app directory
     QString appDir = QCoreApplication::applicationDirPath();
     return QFile::exists(appDir + "/WinDivert.dll");
 }
