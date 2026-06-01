@@ -11,11 +11,14 @@
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
+// WinDivert-based capture (replaces pcap on Windows)
+class WfpCapture;
+#else
+#include <pcap/pcap.h>
 #endif
 
-#include <pcap/pcap.h>
-
-// TCP stream reassembly buffer
+#ifndef Q_OS_WIN
+// TCP stream reassembly buffer (macOS/pcap only)
 struct TcpStream {
     QByteArray requestData;
     QByteArray responseData;
@@ -95,6 +98,7 @@ struct InterfaceCapture {
     QString name;
     QString description;
 };
+#endif // !Q_OS_WIN
 
 class PacketCapture : public QObject
 {
@@ -107,15 +111,16 @@ public:
     void stop();
     bool isRunning() const;
 
-    static QStringList availableInterfaces();
-
 signals:
     void requestCaptured(const RequestItem &item);
     void captureStatusChanged(const QString &message);
 
 private:
+#ifdef Q_OS_WIN
+    WfpCapture *m_wfpCapture = nullptr;
+#else
     bool startCaptureOnInterface(pcap_if_t *dev);
     static bool isNpcapInstalled();
-
     QList<InterfaceCapture> m_captures;
+#endif
 };

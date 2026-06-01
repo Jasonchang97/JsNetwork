@@ -102,7 +102,7 @@ Application::Application(QObject *parent)
         }
     });
 
-    // Packet capture (Npcap) - captures all traffic at network level
+    // Packet capture (WinDivert on Windows, pcap on macOS) - captures all traffic at network level
     connect(m_packetCapture.get(), &PacketCapture::requestCaptured,
             m_mainWindow.get(), &MainWindow::onRequestCaptured);
     connect(m_packetCapture.get(), &PacketCapture::requestCaptured,
@@ -293,9 +293,9 @@ void Application::start()
 #endif
 
     if (m_packetCapture->start()) {
-        logMsg("Packet capture started (Npcap)");
+        logMsg("Packet capture started");
     } else {
-        logMsg("Packet capture failed to start - Npcap may not be installed");
+        logMsg("Packet capture failed to start");
     }
 
     m_mainWindow->show();

@@ -18,7 +18,7 @@ if(WIN32)
     set(QT5_DIR "" CACHE PATH "Path to Qt5 installation root (e.g. C:/Qt/5.15.2/msvc2019)")
     set(VCPKG_LIB_DIR "" CACHE PATH "Path to vcpkg installed libraries")
     set(OPENSSL_DIR "" CACHE PATH "Path to OpenSSL installation")
-    set(NPCAP_SDK_DIR "" CACHE PATH "Path to Npcap SDK")
+    # WinDivert is loaded dynamically (LoadLibrary), no SDK path needed
 else()
     set(QT5_DIR "" CACHE PATH "Path to Qt5 installation root")
     set(OPENSSL_DIR "" CACHE PATH "Path to OpenSSL installation")
@@ -59,6 +59,10 @@ set(SOURCES
     src/core/packet_capture.cpp
 )
 
+if(WIN32)
+    list(APPEND SOURCES src/core/wfp_capture.cpp)
+endif()
+
 set(HEADERS
     src/app/application.h
     src/app/translator.h
@@ -85,6 +89,10 @@ set(HEADERS
     src/platform/cert_installer.h
     src/core/packet_capture.h
 )
+
+if(WIN32)
+    list(APPEND HEADERS src/core/wfp_capture.h)
+endif()
 
 # App icon (macOS)
 if(APPLE)
@@ -146,9 +154,10 @@ if(WIN32 AND VCPKG_LIB_DIR)
     target_include_directories(${PROJECT_NAME} PRIVATE ${VCPKG_LIB_DIR}/include)
 endif()
 
-if(WIN32 AND DEFINED NPCAP_SDK_DIR AND NPCAP_SDK_DIR)
-    target_include_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Include)
-    target_link_directories(${PROJECT_NAME} PRIVATE ${NPCAP_SDK_DIR}/Lib)
+# WinDivert header (loaded dynamically via LoadLibrary, no linking needed)
+if(WIN32)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/windivert)
 endif()
 
 if(APPLE AND DEFINED PCAP_DIR AND PCAP_DIR)
@@ -181,17 +190,7 @@ if(WIN32)
         gdi32
         user32
         ${ZLIB_LIB}
-        wpcap
-        Packet
         wininet
-        delayimp
-    )
-
-    # Delay-load wpcap.dll and Packet.dll so the app can start and show
-    # a helpful error when Npcap is not installed, instead of crashing.
-    target_link_options(${PROJECT_NAME} PRIVATE
-        "/DELAYLOAD:wpcap.dll"
-        "/DELAYLOAD:Packet.dll"
     )
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE
@@ -240,7 +239,7 @@ if(APPLE)
     )
 endif()
 
-# Windows post-build: copy Qt DLLs and Npcap DLLs
+# Windows post-build: copy Qt DLLs and WinDivert files
 if(WIN32)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
@@ -265,14 +264,22 @@ if(WIN32)
             "${QT5_ROOT_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
     )
 
-    # Copy Npcap DLLs (32-bit from SysWOW64)
-    if(EXISTS "C:/Windows/SysWOW64/Npcap/wpcap.dll")
+    # Copy WinDivert DLL and driver files
+    set(WINDIVERT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/windivert")
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(WINDIVERT_ARCH "x64")
+    else()
+        set(WINDIVERT_ARCH "x86")
+    endif()
+    if(EXISTS "${WINDIVERT_DIR}/${WINDIVERT_ARCH}/WinDivert.dll")
         add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "C:/Windows/SysWOW64/Npcap/wpcap.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+                "${WINDIVERT_DIR}/${WINDIVERT_ARCH}/WinDivert.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "C:/Windows/SysWOW64/Npcap/Packet.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-            COMMENT "Copying Npcap DLLs"
+                "${WINDIVERT_DIR}/${WINDIVERT_ARCH}/WinDivert64.sys" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${WINDIVERT_DIR}/${WINDIVERT_ARCH}/WinDivert32.sys" "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
+            COMMENT "Copying WinDivert DLL and drivers"
         )
     endif()
 endif()

@@ -7,15 +7,66 @@
 #include <QDateTime>
 
 #ifdef Q_OS_WIN
-#include <winsock2.h>
-#include <ws2tcpip.h>
+// ============================================================================
+// Windows: delegate to WfpCapture (WinDivert-based)
+// ============================================================================
+#include "wfp_capture.h"
+
+PacketCapture::PacketCapture(QObject *parent)
+    : QObject(parent)
+{
+}
+
+PacketCapture::~PacketCapture()
+{
+    stop();
+}
+
+bool PacketCapture::start()
+{
+    if (m_wfpCapture) {
+        stop();
+    }
+
+    m_wfpCapture = new WfpCapture(this);
+    connect(m_wfpCapture, &WfpCapture::requestCaptured,
+            this, &PacketCapture::requestCaptured, Qt::QueuedConnection);
+    connect(m_wfpCapture, &WfpCapture::captureStatusChanged,
+            this, &PacketCapture::captureStatusChanged);
+
+    if (!m_wfpCapture->start()) {
+        qWarning() << "PacketCapture: WfpCapture start failed";
+        delete m_wfpCapture;
+        m_wfpCapture = nullptr;
+        return false;
+    }
+
+    qDebug() << "PacketCapture: WinDivert capture started";
+    return true;
+}
+
+void PacketCapture::stop()
+{
+    if (m_wfpCapture) {
+        m_wfpCapture->stop();
+        delete m_wfpCapture;
+        m_wfpCapture = nullptr;
+    }
+}
+
+bool PacketCapture::isRunning() const
+{
+    return m_wfpCapture && m_wfpCapture->isRunning();
+}
+
 #else
+// ============================================================================
+// macOS: pcap-based capture
+// ============================================================================
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#endif
-
 #include <pcap/pcap.h>
 
 static void logToFile(const QString &msg) {
@@ -655,34 +706,10 @@ PacketCapture::~PacketCapture()
 
 bool PacketCapture::isNpcapInstalled()
 {
-#ifdef Q_OS_WIN
-    // Check for Npcap DLLs in standard locations
-    return QFile::exists("C:/Windows/System32/Npcap/wpcap.dll")
-        || QFile::exists("C:/Windows/SysWOW64/Npcap/wpcap.dll");
-#else
     // macOS: libpcap is always available
     return QFile::exists("/usr/lib/libpcap.dylib")
         || QFile::exists("/opt/homebrew/opt/libpcap/lib/libpcap.dylib");
-#endif
 }
-
-// SEH-safe wrapper: __try cannot coexist with C++ destructors on MSVC
-#ifdef Q_OS_WIN
-static int safePcapFindalldevs(pcap_if_t **alldevs, char *errbuf)
-{
-    __try {
-        return pcap_findalldevs(alldevs, errbuf);
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        strncpy(errbuf, "wpcap.dll load failed (Npcap not installed)", PCAP_ERRBUF_SIZE - 1);
-        return -1;
-    }
-}
-#else
-static int safePcapFindalldevs(pcap_if_t **alldevs, char *errbuf)
-{
-    return pcap_findalldevs(alldevs, errbuf);
-}
-#endif
 
 QStringList PacketCapture::availableInterfaces()
 {
@@ -690,7 +717,7 @@ QStringList PacketCapture::availableInterfaces()
     pcap_if_t *alldevs;
     char errbuf[PCAP_ERRBUF_SIZE];
 
-    if (safePcapFindalldevs(&alldevs, errbuf) == -1) {
+    if (pcap_findalldevs(&alldevs, errbuf) == -1) {
         qWarning() << "PacketCapture: pcap_findalldevs failed:" << errbuf;
         return names;
     }
@@ -713,13 +740,9 @@ bool PacketCapture::start()
         stop();
     }
 
-    // Check Npcap/libpcap availability
+    // Check libpcap availability
     if (!isNpcapInstalled()) {
-#ifdef Q_OS_WIN
-        QString msg = "Npcap not installed. Download from https://npcap.com and install with 'WinPcap API-compatible Mode' enabled.";
-#else
         QString msg = "libpcap not found. Install via: brew install libpcap";
-#endif
         qWarning() << "PacketCapture:" << msg;
         logToFile("ERROR: " + msg);
         emit captureStatusChanged(msg);
@@ -729,7 +752,7 @@ bool PacketCapture::start()
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_if_t *alldevs;
 
-    if (safePcapFindalldevs(&alldevs, errbuf) == -1) {
+    if (pcap_findalldevs(&alldevs, errbuf) == -1) {
         qWarning() << "PacketCapture: pcap_findalldevs failed:" << errbuf;
         logToFile("ERROR: pcap_findalldevs failed: " + QString(errbuf));
         emit captureStatusChanged(QString("pcap_findalldevs failed: %1").arg(errbuf));
@@ -892,3 +915,5 @@ bool PacketCapture::isRunning() const
     }
     return false;
 }
+
+#endif // Q_OS_WIN / macOS pcap implementation

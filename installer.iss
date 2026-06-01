@@ -31,22 +31,6 @@ Name: "{group}\{cm:UninstallProgram,JsNetwork}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\JsNetwork"; Filename: "{app}\JsNetwork.exe"; Tasks: desktopicon
 Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\JsNetwork"; Filename: "{app}\JsNetwork.exe"; Tasks: quicklaunchicon
 
-[Code]
-function IsNpcapInstalled: Boolean;
-begin
-  Result := FileExists(ExpandConstant('{sys}\Npcap\wpcap.dll'));
-  if not Result then
-    Result := FileExists(ExpandConstant('{syswow64}\Npcap\wpcap.dll'));
-end;
-
-function PrepareToInstall(var NeedsRestart: Boolean): String;
-begin
-  if not IsNpcapInstalled then
-    Result := 'Npcap is not installed. Please install Npcap from https://npcap.com before running JsNetwork.'
-  else
-    Result := '';
-end;
-
 [Run]
 Filename: "{app}\JsNetwork.exe"; Description: "{cm:LaunchProgram,JsNetwork}"; Flags: nowait postinstall skipifsilent
 

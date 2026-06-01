@@ -18,13 +18,6 @@ jobs:
           version: '5.15.2'
           arch: win32_msvc2019
 
-      - name: Install Npcap SDK
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile npcap-sdk.zip
-          Expand-Archive -Path npcap-sdk.zip -DestinationPath C:\npcap-sdk
-          echo "NPCAP_SDK_DIR=C:\npcap-sdk" >> $env:GITHUB_ENV
-
       - name: Install OpenSSL and zlib via vcpkg
         shell: pwsh
         run: |
@@ -37,7 +30,6 @@ jobs:
         run: |
           cmake -B build -G "Visual Studio 17 2022" -A Win32 \
             -DQT5_DIR="${{ env.Qt5_DIR }}" \
-            -DNPCAP_SDK_DIR="${{ env.NPCAP_SDK_DIR }}" \
             -DOPENSSL_DIR="${{ env.DEPS_DIR }}" \
             -DVCPKG_LIB_DIR="${{ env.DEPS_DIR }}" \
             -DBUILD_TESTS=ON
@@ -69,9 +61,10 @@ jobs:
           # LSP
           cp "$rel\jsnetwork_lsp.dll" staging\
           cp "$rel\lsp_installer.exe" staging\
-          # Npcap DLLs
-          cp "$rel\wpcap.dll" staging\ -ErrorAction SilentlyContinue
-          cp "$rel\Packet.dll" staging\ -ErrorAction SilentlyContinue
+          # WinDivert DLL and drivers
+          cp "$rel\WinDivert.dll" staging\ -ErrorAction SilentlyContinue
+          cp "$rel\WinDivert64.sys" staging\ -ErrorAction SilentlyContinue
+          cp "$rel\WinDivert32.sys" staging\ -ErrorAction SilentlyContinue
           # OpenSSL/zlib runtime DLLs from vcpkg bin directory
           foreach ($dll in (Get-ChildItem "$env:DEPS_DIR\bin\libcrypto*.dll","$env:DEPS_DIR\bin\libssl*.dll","$env:DEPS_DIR\bin\zlib*.dll","$env:DEPS_DIR\bin\z*.dll" -ErrorAction SilentlyContinue)) { cp $dll.FullName staging\ }
           Write-Host "=== vcpkg bin contents ==="
