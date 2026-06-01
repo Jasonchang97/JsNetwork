@@ -56,14 +56,6 @@ static void signalHandler(int sig)
     _exit(128 + sig);
 }
 
-#ifdef Q_OS_WIN
-static LONG WINAPI crashHandler(EXCEPTION_POINTERS *)
-{
-    cleanupProxy();
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-#endif
-
 static void installCleanupHandlers()
 {
     std::atexit(cleanupProxy);
@@ -75,9 +67,7 @@ static void installCleanupHandlers()
     std::signal(SIGQUIT, signalHandler);
     std::signal(SIGHUP, signalHandler);
 #endif
-#ifdef Q_OS_WIN
-    SetUnhandledExceptionFilter(crashHandler);
-#endif
+    // Note: SetUnhandledExceptionFilter is in main.cpp (detailedCrashHandler)
 }
 
 Application::Application(QObject *parent)
