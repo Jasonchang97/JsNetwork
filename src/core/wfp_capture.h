@@ -1,6 +1,6 @@
 #pragma once
 
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN) || defined(Q_MOC_RUN)
 
 #include <QObject>
 #include <QThread>
@@ -10,8 +10,10 @@
 #include <QDateTime>
 #include "model/request_item.h"
 
+#ifdef Q_OS_WIN
 #include <winsock2.h>
 #include <windows.h>
+#endif
 
 // Forward declarations for WinDivert types
 struct _WINDIVERT_IPHDR;
@@ -20,7 +22,7 @@ struct _WINDIVERT_TCPHDR;
 struct _WINDIVERT_UDPHDR;
 struct _WINDIVERT_ADDRESS;
 
-// TCP stream reassembly buffer (shared with PacketCapture)
+// TCP stream reassembly buffer
 struct WfpTcpStream {
     QByteArray requestData;
     QByteArray responseData;
@@ -78,14 +80,14 @@ signals:
 
 private:
     void processTcpPacket(const _WINDIVERT_IPHDR *ipHdr, const _WINDIVERT_TCPHDR *tcpHdr,
-                          const quint8 *payload, UINT payloadLen, bool outbound);
+                          const quint8 *payload, unsigned int payloadLen, bool outbound);
     void processTcpPacketV6(const _WINDIVERT_IPV6HDR *ip6Hdr, const _WINDIVERT_TCPHDR *tcpHdr,
-                            const quint8 *payload, UINT payloadLen, bool outbound);
+                            const quint8 *payload, unsigned int payloadLen, bool outbound);
     void checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream);
     void emitStaleStreams();
     static QString extractSniFromClientHello(const QByteArray &data);
 
-    void *m_handle;  // HANDLE (WinDivert handle)
+    void *m_handle;
     const WinDivertApi *m_api;
     volatile bool m_stopRequested = false;
 
@@ -96,20 +98,21 @@ private:
 };
 
 // WinDivert function pointer types
+#ifndef WINAPI
+#define WINAPI
+#endif
 typedef void* HANDLE_WD;
-typedef INT16 WINDIVERT_LAYER_T;
-typedef UINT64 WINDIVERT_FLAGS_T;
 
-typedef HANDLE_WD (WINAPI *WinDivertOpenFn)(const char *, WINDIVERT_LAYER_T, INT16, UINT64);
-typedef BOOL (WINAPI *WinDivertRecvFn)(HANDLE_WD, void *, UINT, UINT *, _WINDIVERT_ADDRESS *);
-typedef BOOL (WINAPI *WinDivertCloseFn)(HANDLE_WD);
-typedef BOOL (WINAPI *WinDivertShutdownFn)(HANDLE_WD, int);
-typedef BOOL (WINAPI *WinDivertHelperParsePacketFn)(const void *, UINT,
-    _WINDIVERT_IPHDR **, _WINDIVERT_IPV6HDR **, UINT8 *,
+typedef HANDLE_WD (WINAPI *WinDivertOpenFn)(const char *, int, short, unsigned long long);
+typedef int (WINAPI *WinDivertRecvFn)(HANDLE_WD, void *, unsigned int, unsigned int *, _WINDIVERT_ADDRESS *);
+typedef int (WINAPI *WinDivertCloseFn)(HANDLE_WD);
+typedef int (WINAPI *WinDivertShutdownFn)(HANDLE_WD, int);
+typedef int (WINAPI *WinDivertHelperParsePacketFn)(const void *, unsigned int,
+    _WINDIVERT_IPHDR **, _WINDIVERT_IPV6HDR **, unsigned char *,
     void *, void *, _WINDIVERT_TCPHDR **, _WINDIVERT_UDPHDR **,
-    void **, UINT *, void **, UINT *);
-typedef BOOL (WINAPI *WinDivertHelperFormatIPv4AddressFn)(UINT32, char *, UINT);
-typedef BOOL (WINAPI *WinDivertHelperFormatIPv6AddressFn)(const UINT32 *, char *, UINT);
+    void **, unsigned int *, void **, unsigned int *);
+typedef int (WINAPI *WinDivertHelperFormatIPv4AddressFn)(unsigned int, char *, unsigned int);
+typedef int (WINAPI *WinDivertHelperFormatIPv6AddressFn)(const unsigned int *, char *, unsigned int);
 
 struct WinDivertApi {
     WinDivertOpenFn open = nullptr;
@@ -144,7 +147,7 @@ private:
     WinDivertApi m_api;
     void *m_dllHandle = nullptr;
     WfpCaptureThread *m_thread = nullptr;
-    void *m_wdHandle = nullptr;  // WinDivert HANDLE
+    void *m_wdHandle = nullptr;
 };
 
-#endif // Q_OS_WIN
+#endif // Q_OS_WIN || Q_MOC_RUN

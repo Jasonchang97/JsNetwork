@@ -177,7 +177,7 @@ void WfpCaptureThread::run()
 
 void WfpCaptureThread::processTcpPacket(const WINDIVERT_IPHDR *ipHdr,
                                          const WINDIVERT_TCPHDR *tcpHdr,
-                                         const quint8 *payload, UINT payloadLen,
+                                         const quint8 *payload, unsigned int payloadLen,
                                          bool outbound)
 {
     char srcBuf[64], dstBuf[64];
@@ -243,7 +243,7 @@ void WfpCaptureThread::processTcpPacket(const WINDIVERT_IPHDR *ipHdr,
 
 void WfpCaptureThread::processTcpPacketV6(const WINDIVERT_IPV6HDR *ip6Hdr,
                                            const WINDIVERT_TCPHDR *tcpHdr,
-                                           const quint8 *payload, UINT payloadLen,
+                                           const quint8 *payload, unsigned int payloadLen,
                                            bool outbound)
 {
     char srcBuf[64], dstBuf[64];
