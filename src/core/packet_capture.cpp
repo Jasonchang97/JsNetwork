@@ -666,18 +666,31 @@ bool PacketCapture::isNpcapInstalled()
 #endif
 }
 
+// SEH-safe wrapper: __try cannot coexist with C++ destructors on MSVC
+#ifdef Q_OS_WIN
+static int safePcapFindalldevs(pcap_if_t **alldevs, char *errbuf)
+{
+    __try {
+        return pcap_findalldevs(alldevs, errbuf);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        strncpy(errbuf, "wpcap.dll load failed (Npcap not installed)", PCAP_ERRBUF_SIZE - 1);
+        return -1;
+    }
+}
+#else
+static int safePcapFindalldevs(pcap_if_t **alldevs, char *errbuf)
+{
+    return pcap_findalldevs(alldevs, errbuf);
+}
+#endif
+
 QStringList PacketCapture::availableInterfaces()
 {
     QStringList names;
-
-#ifdef Q_OS_WIN
-    __try {
-#endif
-
     pcap_if_t *alldevs;
     char errbuf[PCAP_ERRBUF_SIZE];
 
-    if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+    if (safePcapFindalldevs(&alldevs, errbuf) == -1) {
         qWarning() << "PacketCapture: pcap_findalldevs failed:" << errbuf;
         return names;
     }
@@ -692,13 +705,6 @@ QStringList PacketCapture::availableInterfaces()
 
     pcap_freealldevs(alldevs);
     return names;
-
-#ifdef Q_OS_WIN
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        qWarning() << "PacketCapture: wpcap.dll not found (Npcap not installed)";
-        return names;
-    }
-#endif
 }
 
 bool PacketCapture::start()
@@ -723,26 +729,12 @@ bool PacketCapture::start()
     char errbuf[PCAP_ERRBUF_SIZE];
     pcap_if_t *alldevs;
 
-#ifdef Q_OS_WIN
-    __try {
-#endif
-
-    if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+    if (safePcapFindalldevs(&alldevs, errbuf) == -1) {
         qWarning() << "PacketCapture: pcap_findalldevs failed:" << errbuf;
         logToFile("ERROR: pcap_findalldevs failed: " + QString(errbuf));
         emit captureStatusChanged(QString("pcap_findalldevs failed: %1").arg(errbuf));
         return false;
     }
-
-#ifdef Q_OS_WIN
-    } __except(EXCEPTION_EXECUTE_HANDLER) {
-        QString msg = "Failed to load wpcap.dll. Please install Npcap from https://npcap.com";
-        qWarning() << "PacketCapture:" << msg;
-        logToFile("ERROR: " + msg);
-        emit captureStatusChanged(msg);
-        return false;
-    }
-#endif
 
     // Log all available interfaces
     logToFile("=== PacketCapture::start() ===");
