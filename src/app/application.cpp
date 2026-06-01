@@ -289,7 +289,9 @@ void Application::start()
         logMsg("Packet capture failed to start");
     }
 
+    logMsg("About to show main window...");
     m_mainWindow->show();
+    logMsg("Main window shown, entering event loop");
 }
 
 void Application::initCertificate()

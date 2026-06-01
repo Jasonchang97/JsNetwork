@@ -58,6 +58,9 @@ jobs:
           # Qt platform plugin
           mkdir staging\platforms
           cp "$rel\platforms\qwindows.dll" staging\platforms\
+          # Qt SQL plugins (SQLite driver for traffic storage)
+          mkdir staging\sqldrivers -ErrorAction SilentlyContinue
+          cp "$rel\sqldrivers\qsqlite.dll" staging\sqldrivers\ -ErrorAction SilentlyContinue
           # LSP
           cp "$rel\jsnetwork_lsp.dll" staging\
           cp "$rel\lsp_installer.exe" staging\

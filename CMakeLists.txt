@@ -264,6 +264,17 @@ if(WIN32)
             "${QT5_ROOT_DIR}/plugins/platforms/qwindows.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
     )
 
+    # Qt SQL plugins (SQLite driver for traffic storage)
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/sqldrivers"
+    )
+    if(EXISTS "${QT5_ROOT_DIR}/plugins/sqldrivers/qsqlite.dll")
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${QT5_ROOT_DIR}/plugins/sqldrivers/qsqlite.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>/sqldrivers"
+        )
+    endif()
+
     # Copy OpenSSL and zlib runtime DLLs
     foreach(_deps_dir IN ITEMS "${OPENSSL_DIR}" "${VCPKG_LIB_DIR}")
         if(_deps_dir AND EXISTS "${_deps_dir}/bin")

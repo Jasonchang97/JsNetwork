@@ -58,38 +58,89 @@ static void qtMessageHandler(QtMsgType type, const QMessageLogContext &ctx, cons
 }
 
 #ifdef Q_OS_WIN
-static LONG WINAPI detailedCrashHandler(EXCEPTION_POINTERS *exInfo) {
-    if (exInfo && exInfo->ExceptionRecord) {
-        DWORD code = exInfo->ExceptionRecord->ExceptionCode;
-        ULONG_PTR addr = (ULONG_PTR)exInfo->ExceptionRecord->ExceptionAddress;
-        crashLog(QString("CRASH: ExceptionCode=0x%1 Address=0x%2")
-                 .arg(code, 8, 16, QChar('0'))
-                 .arg(addr, 16, 16, QChar('0')));
-
-        // Write minidump
-        QString dumpPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/crash.dmp";
-        HANDLE hFile = CreateFileW((LPCWSTR)dumpPath.utf16(), GENERIC_WRITE, 0, nullptr,
-                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (hFile != INVALID_HANDLE_VALUE) {
-            // Dynamically load MiniDumpWriteDump to avoid linking dbghelp
-            typedef BOOL (WINAPI *MiniDumpWriteDumpFn)(HANDLE, DWORD, HANDLE, int, void*, void*, void*);
-            HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll");
-            if (dbghelp) {
-                auto pMiniDump = (MiniDumpWriteDumpFn)GetProcAddress(dbghelp, "MiniDumpWriteDump");
-                if (pMiniDump) {
-                    MINIDUMP_EXCEPTION_INFORMATION mei;
-                    mei.ThreadId = GetCurrentThreadId();
-                    mei.ExceptionPointers = exInfo;
-                    mei.ClientPointers = FALSE;
-                    pMiniDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
-                              2 /* MiniDumpWithFullMemory */, &mei, nullptr, nullptr);
-                }
-                FreeLibrary(dbghelp);
-            }
-            CloseHandle(hFile);
-        }
+// Raw Win32 log helper — safe to call in crash handler (no heap allocation)
+static void rawCrashLog(const wchar_t *path, const char *msg) {
+    HANDLE h = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h != INVALID_HANDLE_VALUE) {
+        DWORD written;
+        SetFilePointer(h, 0, nullptr, FILE_END);
+        WriteFile(h, msg, (DWORD)strlen(msg), &written, nullptr);
+        CloseHandle(h);
     }
-    // Terminate after writing dump - can't safely continue after access violation
+}
+
+static LONG WINAPI detailedCrashHandler(EXCEPTION_POINTERS *exInfo) {
+    // Use raw Win32 APIs only — Qt/QString are unsafe after a crash
+    if (!exInfo || !exInfo->ExceptionRecord) {
+        TerminateProcess(GetCurrentProcess(), 139);
+        return EXCEPTION_EXECUTE_HANDLER;
+    }
+
+    DWORD code = exInfo->ExceptionRecord->ExceptionCode;
+    ULONG_PTR addr = (ULONG_PTR)exInfo->ExceptionRecord->ExceptionAddress;
+
+    // Determine log/dump paths
+    wchar_t appDataPath[MAX_PATH] = {0};
+    bool hasAppData = GetEnvironmentVariableW(L"APPDATA", appDataPath, MAX_PATH) > 0;
+
+    wchar_t logPath[MAX_PATH];
+    wchar_t dumpPath[MAX_PATH];
+    if (hasAppData) {
+        _snwprintf_s(logPath, MAX_PATH, _TRUNCATE,
+            L"%s\\JsNetwork\\JsNetwork\\crash.log", appDataPath);
+        _snwprintf_s(dumpPath, MAX_PATH, _TRUNCATE,
+            L"%s\\JsNetwork\\JsNetwork\\crash.dmp", appDataPath);
+    } else {
+        wcscpy_s(logPath, L"crash.log");
+        wcscpy_s(dumpPath, L"crash.dmp");
+    }
+
+    // Log crash info
+    char logBuf[256];
+    _snprintf_s(logBuf, sizeof(logBuf), _TRUNCATE,
+        "CRASH: ExceptionCode=0x%08lx Address=0x%016llx\r\n",
+        (unsigned long)code, (unsigned long long)addr);
+    rawCrashLog(logPath, logBuf);
+
+    // Write minidump
+    typedef BOOL (WINAPI *MiniDumpWriteDumpFn)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE,
+                                                PMINIDUMP_EXCEPTION_INFORMATION,
+                                                PMINIDUMP_USER_STREAM_INFORMATION,
+                                                PMINIDUMP_CALLBACK_INFORMATION);
+    HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll");
+    if (dbghelp) {
+        auto pMiniDump = (MiniDumpWriteDumpFn)GetProcAddress(dbghelp, "MiniDumpWriteDump");
+        if (pMiniDump) {
+            MINIDUMP_EXCEPTION_INFORMATION mei;
+            mei.ThreadId = GetCurrentThreadId();
+            mei.ExceptionPointers = exInfo;
+            mei.ClientPointers = FALSE;
+
+            HANDLE hFile = CreateFileW(dumpPath, GENERIC_WRITE, 0, nullptr,
+                                       CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (hFile != INVALID_HANDLE_VALUE) {
+                BOOL ok = pMiniDump(GetCurrentProcess(), GetCurrentProcessId(), hFile,
+                                    MiniDumpNormal, &mei, nullptr, nullptr);
+                if (!ok) {
+                    DWORD err = GetLastError();
+                    char errBuf[128];
+                    _snprintf_s(errBuf, sizeof(errBuf), _TRUNCATE,
+                        "MiniDumpWriteDump FAILED, GetLastError=%lu\r\n", err);
+                    rawCrashLog(logPath, errBuf);
+                }
+                FlushFileBuffers(hFile);
+                CloseHandle(hFile);
+            } else {
+                rawCrashLog(logPath, "CreateFile for crash.dmp FAILED\r\n");
+            }
+        } else {
+            rawCrashLog(logPath, "GetProcAddress(MiniDumpWriteDump) FAILED\r\n");
+        }
+    } else {
+        rawCrashLog(logPath, "LoadLibrary(dbghelp.dll) FAILED\r\n");
+    }
+
     TerminateProcess(GetCurrentProcess(), 139);
     return EXCEPTION_EXECUTE_HANDLER;
 }
