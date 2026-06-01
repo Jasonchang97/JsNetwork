@@ -123,68 +123,6 @@ Application::Application(QObject *parent)
     // Register crash-safe cleanup handlers (atexit + signals)
     installCleanupHandlers();
 
-    // MITM toggle from UI
-    connect(m_mainWindow.get(), &MainWindow::mitmToggled,
-            this, [this](bool enabled) {
-        logMsg(QString("MITM toggle requested: enabled=%1 certReady=%2")
-               .arg(enabled).arg(m_certManager->isReady()));
-        if (enabled && m_certManager->isReady()) {
-            m_certManager->preGenerateCerts({
-                "www.google.com", "google.com",
-                "accounts.google.com", "apis.google.com",
-                "mail.google.com", "drive.google.com",
-                "translate.google.com", "maps.google.com",
-                "play.google.com", "scholar.google.com",
-                "clients1.google.com", "clients2.google.com",
-                "clients3.google.com", "clients4.google.com",
-                "clients5.google.com",
-                "www.gstatic.com", "fonts.gstatic.com",
-                "ssl.gstatic.com", "encrypted.gstatic.com",
-                "ajax.googleapis.com", "fonts.googleapis.com",
-                "www.googleapis.com", "storage.googleapis.com",
-                "lh1.googleusercontent.com", "lh2.googleusercontent.com",
-                "lh3.googleusercontent.com", "lh4.googleusercontent.com",
-                "lh5.googleusercontent.com", "lh6.googleusercontent.com",
-                "www.youtube.com", "youtube.com",
-                "i.ytimg.com", "s.ytimg.com",
-                "yt3.ggpht.com", "yt3.googleusercontent.com",
-                "github.com", "api.github.com",
-                "raw.githubusercontent.com", "gist.githubusercontent.com",
-                "avatars.githubusercontent.com",
-                "www.bing.com", "login.microsoftonline.com",
-                "outlook.office.com", "login.live.com",
-                "cdn.jsdelivr.net", "unpkg.com",
-                "cdnjs.cloudflare.com", "www.cloudflare.com",
-                "ajax.cloudflare.com", "cdn.bootcdn.net",
-                "www.baidu.com", "baidu.com",
-                "m.baidu.com", "map.baidu.com",
-                "passport.baidu.com", "pan.baidu.com",
-                "www.bilibili.com", "api.bilibili.com",
-                "static.hdslb.com",
-                "www.zhihu.com", "zhuanlan.zhihu.com",
-                "twitter.com", "x.com", "abs.twimg.com",
-                "pbs.twimg.com", "t.co",
-                "www.facebook.com", "static.xx.fbcdn.net",
-                "www.instagram.com", "static.cdninstagram.com",
-                "www.wikipedia.org", "en.wikipedia.org",
-                "upload.wikimedia.org",
-                "www.apple.com", "developer.apple.com",
-                "stackoverflow.com", "cdn.sstatic.net",
-                "npmjs.com", "registry.npmjs.org",
-                "www.amazon.com", "images-na.ssl-images-amazon.com",
-                "fls-na.amazon.com",
-                "xp.apple.com", "gs.apple.com",
-                "swcdn.apple.com", "swdist.apple.com",
-            });
-            m_proxyServer->enableMitm(m_certManager.get());
-            m_mainWindow->setMitmStatus(true);
-            logMsg("MITM enabled");
-        } else {
-            m_proxyServer->disableMitm();
-            m_mainWindow->setMitmStatus(false);
-            logMsg("MITM disabled");
-        }
-    });
 }
 
 Application::~Application()
@@ -278,9 +216,57 @@ void Application::start()
     initCertificate();
 
     if (m_certManager->isReady()) {
-        logMsg("Certificate ready - MITM available (toggle via UI)");
+        m_certManager->preGenerateCerts({
+            "www.google.com", "google.com",
+            "accounts.google.com", "apis.google.com",
+            "mail.google.com", "drive.google.com",
+            "translate.google.com", "maps.google.com",
+            "play.google.com", "scholar.google.com",
+            "clients1.google.com", "clients2.google.com",
+            "clients3.google.com", "clients4.google.com",
+            "clients5.google.com",
+            "www.gstatic.com", "fonts.gstatic.com",
+            "ssl.gstatic.com", "encrypted.gstatic.com",
+            "ajax.googleapis.com", "fonts.googleapis.com",
+            "www.googleapis.com", "storage.googleapis.com",
+            "lh1.googleusercontent.com", "lh2.googleusercontent.com",
+            "lh3.googleusercontent.com", "lh4.googleusercontent.com",
+            "lh5.googleusercontent.com", "lh6.googleusercontent.com",
+            "www.youtube.com", "youtube.com",
+            "i.ytimg.com", "s.ytimg.com",
+            "yt3.ggpht.com", "yt3.googleusercontent.com",
+            "github.com", "api.github.com",
+            "raw.githubusercontent.com", "gist.githubusercontent.com",
+            "avatars.githubusercontent.com",
+            "www.bing.com", "login.microsoftonline.com",
+            "outlook.office.com", "login.live.com",
+            "cdn.jsdelivr.net", "unpkg.com",
+            "cdnjs.cloudflare.com", "www.cloudflare.com",
+            "ajax.cloudflare.com", "cdn.bootcdn.net",
+            "www.baidu.com", "baidu.com",
+            "m.baidu.com", "map.baidu.com",
+            "passport.baidu.com", "pan.baidu.com",
+            "www.bilibili.com", "api.bilibili.com",
+            "static.hdslb.com",
+            "www.zhihu.com", "zhuanlan.zhihu.com",
+            "twitter.com", "x.com", "abs.twimg.com",
+            "pbs.twimg.com", "t.co",
+            "www.facebook.com", "static.xx.fbcdn.net",
+            "www.instagram.com", "static.cdninstagram.com",
+            "www.wikipedia.org", "en.wikipedia.org",
+            "upload.wikimedia.org",
+            "www.apple.com", "developer.apple.com",
+            "stackoverflow.com", "cdn.sstatic.net",
+            "npmjs.com", "registry.npmjs.org",
+            "www.amazon.com", "images-na.ssl-images-amazon.com",
+            "fls-na.amazon.com",
+            "xp.apple.com", "gs.apple.com",
+            "swcdn.apple.com", "swdist.apple.com",
+        });
+        m_proxyServer->enableMitm(m_certManager.get());
+        logMsg("MITM auto-enabled (HTTPS decrypt active)");
     } else {
-        logMsg("Certificate NOT ready - MITM unavailable");
+        logMsg("Certificate NOT ready - HTTPS decrypt unavailable");
     }
 
 #ifdef Q_OS_WIN

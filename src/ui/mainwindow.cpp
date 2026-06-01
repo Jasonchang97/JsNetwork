@@ -121,13 +121,6 @@ void MainWindow::setupToolBar()
 
     toolbar->addSeparator();
 
-    m_mitmAction = toolbar->addAction(tr("HTTPS Decrypt"));
-    m_mitmAction->setCheckable(true);
-    m_mitmAction->setChecked(false);
-    connect(m_mitmAction, &QAction::toggled, this, &MainWindow::mitmToggled);
-
-    toolbar->addSeparator();
-
     m_exportAction = toolbar->addAction(tr("Export HAR"));
     connect(m_exportAction, &QAction::triggered, this, [this]() {
         QString filePath = QFileDialog::getSaveFileName(
@@ -174,14 +167,12 @@ void MainWindow::setupToolBar()
 void MainWindow::setupStatusBar()
 {
     m_statusLabel = new QLabel(this);
-    m_mitmLabel = new QLabel(this);
     m_captureLabel = new QLabel(this);
     m_versionLabel = new QLabel(this);
     m_versionLabel->setText(QString("v%1").arg(JSNETWORK_VERSION));
 
     statusBar()->addWidget(m_statusLabel);
     statusBar()->addPermanentWidget(m_captureLabel);
-    statusBar()->addPermanentWidget(m_mitmLabel);
     statusBar()->addPermanentWidget(m_versionLabel);
 }
 
@@ -196,7 +187,6 @@ void MainWindow::retranslateUi()
 
     // Toolbar
     if (m_clearAction) m_clearAction->setText(t.translate("Clear"));
-    if (m_mitmAction) m_mitmAction->setText(t.translate("HTTPS Decrypt"));
     if (m_exportAction) m_exportAction->setText(t.translate("Export HAR"));
     if (m_themeAction) {
         m_themeAction->setText(m_theme->currentMode() == ThemeMode::Dark
@@ -217,7 +207,6 @@ void MainWindow::retranslateUi()
         m_captureLabel->setText(t.translate("Capture: on"));
         m_captureLabel->setStyleSheet("color: #4ec9b0; font-weight: bold; padding: 0 8px;");
     }
-    setMitmStatus(m_mitmAction && m_mitmAction->isChecked());
 }
 
 void MainWindow::onRequestCaptured(const RequestItem &item)
@@ -228,12 +217,3 @@ void MainWindow::onRequestCaptured(const RequestItem &item)
         .arg(Translator::t("Captured")).arg(m_totalRequests));
 }
 
-void MainWindow::setMitmStatus(bool enabled)
-{
-    auto &t = Translator::instance();
-    m_mitmLabel->setText(enabled ? t.translate("MITM: on") : t.translate("MITM: off"));
-    m_mitmLabel->setStyleSheet(enabled
-        ? "color: #4ec9b0; font-weight: bold; padding: 0 8px;"
-        : "color: #808080; padding: 0 8px;");
-    if (m_mitmAction) m_mitmAction->setChecked(enabled);
-}
