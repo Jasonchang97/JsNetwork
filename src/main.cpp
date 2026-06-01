@@ -6,6 +6,9 @@
 #include <QDateTime>
 #include <QDir>
 
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
@@ -93,6 +96,9 @@ static LONG WINAPI detailedCrashHandler(EXCEPTION_POINTERS *exInfo) {
 
 int main(int argc, char *argv[])
 {
+    // Initialize OpenSSL before any threads or crypto operations
+    OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
+
     // Install Qt message handler early to capture all output
     qInstallMessageHandler(qtMessageHandler);
 

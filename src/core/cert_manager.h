@@ -5,6 +5,7 @@
 #include <QMap>
 #include <QByteArray>
 #include <mutex>
+#include <thread>
 
 // Forward declarations for OpenSSL types
 struct x509_st;
@@ -55,4 +56,5 @@ private:
     // Cache: domain -> SSL_CTX
     QMap<QString, SSL_CTX*> m_domainContexts;
     std::mutex m_mutex;
+    std::thread m_preGenThread;
 };

@@ -5,6 +5,7 @@
 #include <sys/stat.h>
 #endif
 #include <thread>
+#include <mutex>
 
 #include <openssl/pem.h>
 #include <openssl/x509.h>
@@ -13,6 +14,14 @@
 #include <openssl/rsa.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+// Ensure OpenSSL is initialized exactly once before any crypto operations
+static std::once_flag g_opensslInitFlag;
+static void ensureOpenSSLInit() {
+    std::call_once(g_opensslInitFlag, []() {
+        OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
+    });
+}
 
 // ALPN callback for server-side: only accept http/1.1
 static int alpnSelectCallback(SSL *ssl, const unsigned char **out, unsigned char *outlen,
@@ -45,6 +54,11 @@ CertManager::CertManager(QObject *parent)
 
 CertManager::~CertManager()
 {
+    // Wait for any in-progress pre-generation to finish before freeing resources
+    if (m_preGenThread.joinable()) {
+        m_preGenThread.join();
+    }
+
     if (m_caCert) X509_free(m_caCert);
     if (m_caKey) EVP_PKEY_free(m_caKey);
 
@@ -73,16 +87,19 @@ bool CertManager::initialize(const QString &certDir)
 
 bool CertManager::generateCA()
 {
-    // Generate RSA 2048 key for CA
-    EVP_PKEY *pkey = EVP_PKEY_new();
-    if (!pkey) return false;
+    ensureOpenSSLInit();
 
-    RSA *rsa = RSA_new();
-    BIGNUM *bn = BN_new();
-    BN_set_word(bn, RSA_F4);
-    RSA_generate_key_ex(rsa, 2048, bn, nullptr);
-    EVP_PKEY_assign_RSA(pkey, rsa);
-    BN_free(bn);
+    // Generate RSA 2048 key for CA (using modern EVP API)
+    EVP_PKEY *pkey = nullptr;
+    EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+    if (!ctx) return false;
+    if (EVP_PKEY_keygen_init(ctx) <= 0 ||
+        EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, 2048) <= 0 ||
+        EVP_PKEY_keygen(ctx, &pkey) <= 0) {
+        EVP_PKEY_CTX_free(ctx);
+        return false;
+    }
+    EVP_PKEY_CTX_free(ctx);
 
     // Create self-signed CA certificate
     X509 *cert = X509_new();
@@ -180,16 +197,19 @@ bool CertManager::loadCA()
 
 X509 *CertManager::generateDomainCert(const QString &domain, EVP_PKEY *caKey, X509 *caCert)
 {
-    // Generate RSA 2048 key for domain
-    EVP_PKEY *pkey = EVP_PKEY_new();
-    if (!pkey) return nullptr;
-
-    RSA *rsa = RSA_new();
-    BIGNUM *bn = BN_new();
-    BN_set_word(bn, RSA_F4);
-    RSA_generate_key_ex(rsa, 2048, bn, nullptr);
-    EVP_PKEY_assign_RSA(pkey, rsa);
-    BN_free(bn);
+    // Generate RSA 2048 key for domain (using modern EVP API)
+    EVP_PKEY *pkey = nullptr;
+    {
+        EVP_PKEY_CTX *kctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+        if (!kctx) return nullptr;
+        if (EVP_PKEY_keygen_init(kctx) <= 0 ||
+            EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 2048) <= 0 ||
+            EVP_PKEY_keygen(kctx, &pkey) <= 0) {
+            EVP_PKEY_CTX_free(kctx);
+            return nullptr;
+        }
+        EVP_PKEY_CTX_free(kctx);
+    }
 
     // Create certificate
     X509 *cert = X509_new();
@@ -265,6 +285,8 @@ SSL_CTX *CertManager::buildSslContext(X509 *domainCert, EVP_PKEY *domainKey)
 
 SSL_CTX *CertManager::createSslContextForDomain(const QString &domain)
 {
+    ensureOpenSSLInit();
+
     // Fast path: check cache under lock
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -285,16 +307,19 @@ SSL_CTX *CertManager::createSslContextForDomain(const QString &domain)
     }
     if (!caCert || !caKey) return nullptr;
 
-    // Generate RSA 2048 key for domain (1024 rejected by modern browsers)
-    EVP_PKEY *pkey = EVP_PKEY_new();
-    if (!pkey) return nullptr;
-
-    RSA *rsa = RSA_new();
-    BIGNUM *bn = BN_new();
-    BN_set_word(bn, RSA_F4);
-    RSA_generate_key_ex(rsa, 2048, bn, nullptr);
-    EVP_PKEY_assign_RSA(pkey, rsa);
-    BN_free(bn);
+    // Generate RSA 2048 key for domain (using modern EVP API)
+    EVP_PKEY *pkey = nullptr;
+    {
+        EVP_PKEY_CTX *kctx = EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr);
+        if (!kctx) return nullptr;
+        if (EVP_PKEY_keygen_init(kctx) <= 0 ||
+            EVP_PKEY_CTX_set_rsa_keygen_bits(kctx, 2048) <= 0 ||
+            EVP_PKEY_keygen(kctx, &pkey) <= 0) {
+            EVP_PKEY_CTX_free(kctx);
+            return nullptr;
+        }
+        EVP_PKEY_CTX_free(kctx);
+    }
 
     // Create certificate
     X509 *cert = X509_new();
@@ -384,12 +409,17 @@ SSL_CTX *CertManager::createSslContextForDomain(const QString &domain)
 
 void CertManager::preGenerateCerts(const QStringList &domains)
 {
+    // Wait for any previous pre-generation to finish
+    if (m_preGenThread.joinable()) {
+        m_preGenThread.join();
+    }
+
     // Run in background thread to avoid blocking UI
-    std::thread([this, domains]() {
+    m_preGenThread = std::thread([this, domains]() {
         for (const QString &domain : domains) {
             createSslContextForDomain(domain);
         }
-    }).detach();
+    });
 }
 
 QString CertManager::caCertPath() const

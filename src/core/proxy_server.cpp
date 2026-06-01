@@ -42,21 +42,27 @@ public:
 
 protected:
     void run() override {
-        m_serverFd = socket(AF_INET, SOCK_STREAM, 0);
-        if (m_serverFd < 0) { m_success = false; return; }
+        struct addrinfo hints = {}, *result = nullptr;
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        hints.ai_protocol = IPPROTO_TCP;
 
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(m_port);
-
-        struct hostent *he = gethostbyname(m_host.toLatin1().data());
-        if (!he) { CLOSE(m_serverFd); m_serverFd = -1; m_success = false; return; }
-        memcpy(&addr.sin_addr, he->h_addr, he->h_length);
-
-        if (::connect(m_serverFd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-            CLOSE(m_serverFd); m_serverFd = -1; m_success = false; return;
+        QByteArray hostAscii = m_host.toLatin1();
+        QByteArray portStr = QByteArray::number(m_port);
+        if (getaddrinfo(hostAscii.constData(), portStr.constData(), &hints, &result) != 0 || !result) {
+            m_success = false;
+            return;
         }
+
+        m_serverFd = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
+        if (m_serverFd < 0) { freeaddrinfo(result); m_success = false; return; }
+
+        if (::connect(m_serverFd, result->ai_addr, (int)result->ai_addrlen) < 0) {
+            CLOSE(m_serverFd); m_serverFd = -1;
+        }
+        freeaddrinfo(result);
+
+        if (m_serverFd < 0) { m_success = false; return; }
         m_success = true;
     }
 
