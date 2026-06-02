@@ -173,7 +173,27 @@ void WfpCaptureThread::run()
             QMutexLocker lock(&m_mutex);
             auto it = m_streams.find(key);
             if (it != m_streams.end()) {
-                checkStreamComplete(key, it.value());
+                WfpTcpStream &stream = it.value();
+                if (stream.isHttps) {
+                    // HTTPS: emit on FIN/RST if we have SNI
+                    if (!stream.sniHost.isEmpty()) {
+                        RequestItem item;
+                        item.id = m_nextId++;
+                        item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
+                        item.host = stream.sniHost;
+                        item.protocol = "HTTPS";
+                        item.method = "CONNECT";
+                        item.path = stream.sniHost + ":" + QString::number(stream.dstPort);
+                        item.url = "https://" + stream.sniHost;
+                        item.duration = QDateTime::currentMSecsSinceEpoch() - stream.startTime;
+                        item.requestSize = stream.requestData.size();
+                        item.responseSize = stream.responseData.size();
+                        emit httpCaptured(item);
+                    }
+                    m_streams.erase(it);
+                } else {
+                    checkStreamComplete(key, stream);
+                }
             }
         }
     }
@@ -186,8 +206,7 @@ void WfpCaptureThread::run()
         if (stream.isHttps) {
             shouldEmit = !stream.sniHost.isEmpty();
         } else {
-            shouldEmit = !stream.requestData.isEmpty()
-                      && isValidHttpRequest(stream.requestData);
+            shouldEmit = !stream.requestData.isEmpty();
         }
 
         if (shouldEmit) {
@@ -298,18 +317,13 @@ void WfpCaptureThread::processTcpPacket(void *ipHdrVoid, void *tcpHdrVoid,
 
 void WfpCaptureThread::checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream)
 {
-    // For HTTPS, only emit if we have SNI (meaning it's a real TLS connection)
+    // For HTTPS, emit on FIN/RST or stale timeout (not every packet)
     if (stream.isHttps) {
-        if (stream.sniHost.isEmpty()) return;
-        // HTTPS streams are emitted on FIN/RST or stale timeout, not here
         return;
     }
 
-    // For HTTP, validate that request looks like HTTP
+    // For HTTP, need both request and response with valid headers
     if (stream.requestData.isEmpty() || stream.responseData.isEmpty())
-        return;
-
-    if (!isValidHttpRequest(stream.requestData))
         return;
 
     QByteArray respData = stream.responseData;
@@ -359,19 +373,16 @@ void WfpCaptureThread::emitStaleStreams()
     qint64 now = QDateTime::currentMSecsSinceEpoch();
     QMutexLocker lock(&m_mutex);
     for (auto it = m_streams.begin(); it != m_streams.end(); ) {
-        if (now - it.value().startTime > 3000) {
+        if (now - it.value().startTime > 8000) {
             WfpTcpStream &stream = it.value();
 
-            // Only emit streams that have meaningful data
             bool shouldEmit = false;
 
             if (stream.isHttps) {
-                // Only emit HTTPS if we have SNI (real TLS connection)
                 shouldEmit = !stream.sniHost.isEmpty();
             } else {
-                // Only emit HTTP if request looks like valid HTTP
-                shouldEmit = !stream.requestData.isEmpty()
-                          && isValidHttpRequest(stream.requestData);
+                // Emit HTTP if we have any request data (fragments may not start with method)
+                shouldEmit = !stream.requestData.isEmpty();
             }
 
             if (shouldEmit) {

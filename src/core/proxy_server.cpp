@@ -446,7 +446,6 @@ void ProxyServer::handlePlainHttp(Connection *conn)
     QNetworkRequest request(url);
     request.setAttribute(QNetworkRequest::FollowRedirectsAttribute, false);
     request.setRawHeader("Host", conn->item.host.toUtf8());
-    // Copy request headers (skip Host and Proxy-Connection)
     for (auto it = conn->item.requestHeaders.constBegin();
          it != conn->item.requestHeaders.constEnd(); ++it) {
         QString key = it.key().toLower();
@@ -472,7 +471,6 @@ void ProxyServer::handlePlainHttp(Connection *conn)
     }
 
     if (!reply) {
-        // Remove client from tracking and cleanup
         if (conn->client) m_connections.remove(conn->client);
         conn->client->deleteLater();
         delete conn;
@@ -482,52 +480,96 @@ void ProxyServer::handlePlainHttp(Connection *conn)
     // Remove client from tracking (reply owns the connection now)
     if (conn->client) m_connections.remove(conn->client);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, conn]() {
+    // Forward response data incrementally to avoid blocking on streaming responses.
+    // Use readyRead to send data as it arrives; only parse for RequestItem on finished.
+    bool *headersSent = new bool(false);
+    QByteArray *respBuf = new QByteArray();
+    bool *headerParsed = new bool(false);
+
+    connect(reply, &QNetworkReply::readyRead, this, [this, reply, conn, headersSent, respBuf, headerParsed]() {
+        if (!conn->client || !conn->client->isWritable()) return;
+
+        if (!*headersSent) {
+            int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            if (status == 0) return; // Headers not yet available
+            QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
+
+            QByteArray respHeaders = "HTTP/1.1 " + QByteArray::number(status) + " " + reason.toUtf8() + "\r\n";
+            QList<QByteArray> skipHeaders = {"connection", "transfer-encoding", "content-encoding"};
+            for (const auto &hdr : reply->rawHeaderPairs()) {
+                QByteArray key = hdr.first.toLower();
+                if (!skipHeaders.contains(key)) {
+                    respHeaders += hdr.first + ": " + hdr.second + "\r\n";
+                }
+            }
+            respHeaders += "Connection: close\r\n";
+            respHeaders += "\r\n";
+            conn->client->write(respHeaders);
+            *headersSent = true;
+        }
+
+        QByteArray chunk = reply->readAll();
+        if (!chunk.isEmpty()) {
+            respBuf->append(chunk);
+            conn->client->write(chunk);
+            conn->client->flush();
+        }
+    });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, conn, headersSent, respBuf, headerParsed]() {
         reply->deleteLater();
 
         if (reply->error() != QNetworkReply::NoError) {
-            QByteArray errResp = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
-            if (conn->client && conn->client->isWritable()) {
-                conn->client->write(errResp);
+            if (!*headersSent) {
+                QByteArray errResp = "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n";
+                if (conn->client && conn->client->isWritable()) {
+                    conn->client->write(errResp);
+                    conn->client->flush();
+                }
+            }
+        } else {
+            // If no readyRead was emitted (e.g. empty body), send headers now
+            if (!*headersSent && conn->client && conn->client->isWritable()) {
+                int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+                QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
+                QByteArray respHeaders = "HTTP/1.1 " + QByteArray::number(status) + " " + reason.toUtf8() + "\r\n";
+                QList<QByteArray> skipHeaders = {"connection", "transfer-encoding", "content-encoding"};
+                for (const auto &hdr : reply->rawHeaderPairs()) {
+                    QByteArray key = hdr.first.toLower();
+                    if (!skipHeaders.contains(key)) {
+                        respHeaders += hdr.first + ": " + hdr.second + "\r\n";
+                    }
+                }
+                QByteArray body = reply->readAll();
+                respHeaders += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
+                respHeaders += "Connection: close\r\n";
+                respHeaders += "\r\n";
+                conn->client->write(respHeaders);
+                if (!body.isEmpty()) conn->client->write(body);
                 conn->client->flush();
+                *respBuf = body;
             }
-            conn->client->deleteLater();
-            delete conn;
-            return;
+
+            // Build a full response for parsing
+            int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
+            QByteArray fullResp = "HTTP/1.1 " + QByteArray::number(status) + " " + reason.toUtf8() + "\r\n";
+            for (const auto &hdr : reply->rawHeaderPairs()) {
+                fullResp += hdr.first + ": " + hdr.second + "\r\n";
+            }
+            fullResp += "\r\n";
+            fullResp += *respBuf;
+            HttpParser::parseResponse(fullResp, conn->item);
         }
 
-        // Build HTTP response
-        int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        QString reason = reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
-        QByteArray respData = "HTTP/1.1 " + QByteArray::number(status) + " " + reason.toUtf8() + "\r\n";
-
-        QList<QByteArray> skipHeaders = {"connection", "transfer-encoding", "content-encoding"};
-        for (const auto &hdr : reply->rawHeaderPairs()) {
-            QByteArray key = hdr.first.toLower();
-            if (!skipHeaders.contains(key)) {
-                respData += hdr.first + ": " + hdr.second + "\r\n";
-            }
-        }
-        QByteArray body = reply->readAll();
-        respData += "Content-Length: " + QByteArray::number(body.size()) + "\r\n";
-        respData += "Connection: close\r\n";
-        respData += "\r\n";
-        respData += body;
-
-        // Parse response for RequestItem
-        HttpParser::parseResponse(respData, conn->item);
-
-        // Calculate duration
         if (conn->startTime > 0) {
             conn->item.duration = QDateTime::currentMSecsSinceEpoch() - conn->startTime;
         }
-
-        if (conn->client && conn->client->isWritable()) {
-            conn->client->write(respData);
-            conn->client->flush();
-        }
-
         emit requestCaptured(conn->item);
+
+        delete headersSent;
+        delete respBuf;
+        delete headerParsed;
         conn->client->deleteLater();
         delete conn;
     });
