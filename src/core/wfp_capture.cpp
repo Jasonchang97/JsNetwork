@@ -42,6 +42,19 @@ void WfpCaptureThread::requestStop()
     m_stopRequested = true;
 }
 
+static bool isValidHttpRequest(const QByteArray &data)
+{
+    if (data.size() < 10) return false;
+    // Check if data starts with a valid HTTP method
+    static const char *methods[] = {
+        "GET ", "POST ", "PUT ", "DELETE ", "HEAD ", "OPTIONS ", "PATCH ", "CONNECT "
+    };
+    for (const char *m : methods) {
+        if (data.startsWith(m)) return true;
+    }
+    return false;
+}
+
 void WfpCaptureThread::run()
 {
     if (!m_handle || !m_api) return;
@@ -281,19 +294,6 @@ void WfpCaptureThread::processTcpPacket(void *ipHdrVoid, void *tcpHdrVoid,
     }
 
     checkStreamComplete(key, stream);
-}
-
-static bool isValidHttpRequest(const QByteArray &data)
-{
-    if (data.size() < 10) return false;
-    // Check if data starts with a valid HTTP method
-    static const char *methods[] = {
-        "GET ", "POST ", "PUT ", "DELETE ", "HEAD ", "OPTIONS ", "PATCH ", "CONNECT "
-    };
-    for (const char *m : methods) {
-        if (data.startsWith(m)) return true;
-    }
-    return false;
 }
 
 void WfpCaptureThread::checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream)
