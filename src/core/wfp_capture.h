@@ -52,22 +52,22 @@ struct WfpConnKey {
 };
 
 // WinDivert function pointer types (no WinDivert types in signatures)
-#ifndef WINAPI
-#define WINAPI __stdcall
-#endif
+// IMPORTANT: WinDivert uses __cdecl (default C calling convention), NOT __stdcall.
+// Using __stdcall (WINAPI) here would corrupt the stack because __stdcall expects
+// the callee to clean up parameters but __cdecl functions don't.
 
 typedef void* HANDLE_WD;
 
-typedef HANDLE_WD (WINAPI *WinDivertOpenFn)(const char *, int, short, unsigned long long);
-typedef int (WINAPI *WinDivertRecvFn)(HANDLE_WD, void *, unsigned int, unsigned int *, void *);
-typedef int (WINAPI *WinDivertCloseFn)(HANDLE_WD);
-typedef int (WINAPI *WinDivertShutdownFn)(HANDLE_WD, int);
-typedef int (WINAPI *WinDivertHelperParsePacketFn)(const void *, unsigned int,
+typedef HANDLE_WD (*WinDivertOpenFn)(const char *, int, short, unsigned long long);
+typedef int (*WinDivertRecvFn)(HANDLE_WD, void *, unsigned int, unsigned int *, void *);
+typedef int (*WinDivertCloseFn)(HANDLE_WD);
+typedef int (*WinDivertShutdownFn)(HANDLE_WD, int);
+typedef int (*WinDivertHelperParsePacketFn)(const void *, unsigned int,
     void **, void **, unsigned char *,
-    void *, void *, void **, void **,
+    void **, void **, void **, void **,
     void **, unsigned int *, void **, unsigned int *);
-typedef int (WINAPI *WinDivertHelperFormatIPv4AddressFn)(unsigned int, char *, unsigned int);
-typedef int (WINAPI *WinDivertHelperFormatIPv6AddressFn)(const unsigned int *, char *, unsigned int);
+typedef int (*WinDivertHelperFormatIPv4AddressFn)(unsigned int, char *, unsigned int);
+typedef int (*WinDivertHelperFormatIPv6AddressFn)(const unsigned int *, char *, unsigned int);
 
 struct WinDivertApi {
     WinDivertOpenFn open = nullptr;

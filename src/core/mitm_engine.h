@@ -45,7 +45,6 @@ private:
     void cleanup();
 
     QTcpSocket *m_clientSocket;
-    QTcpSocket *m_serverSocket;
     QString m_targetHost;
     quint16 m_targetPort;
     CertManager *m_certMgr;

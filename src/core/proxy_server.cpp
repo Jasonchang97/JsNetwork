@@ -391,13 +391,12 @@ void ProxyServer::handleConnect(Connection *conn)
         conn->client = nullptr;
 
         MitmConnection *mitmConn = m_mitmEngine->intercept(client, targetHost, targetPort);
-        connect(mitmConn, &MitmConnection::finished, this, [conn, client]() {
+        connect(mitmConn, &MitmConnection::finished, this, [mitmConn, conn, client]() {
             client->disconnectFromHost();
             client->deleteLater();
             delete conn;
+            mitmConn->deleteLater();
         });
-        connect(mitmConn, &MitmConnection::requestCaptured,
-                this, &ProxyServer::onMitmCaptured);
     } else {
         // Pass-through: DNS + connect in background thread (avoids blocking main thread)
         qDebug() << "Proxy: pass-through" << targetHost << ":" << targetPort;
@@ -618,14 +617,12 @@ void ProxyServer::handleDirectTls(Connection *conn, const QString &host)
 
     MitmConnection *mitmConn = m_mitmEngine->intercept(client, host, 443);
 
-    connect(mitmConn, &MitmConnection::finished, this, [conn, client]() {
+    connect(mitmConn, &MitmConnection::finished, this, [mitmConn, conn, client]() {
         client->disconnectFromHost();
         client->deleteLater();
         delete conn;
+        mitmConn->deleteLater();
     });
-
-    connect(mitmConn, &MitmConnection::requestCaptured,
-            this, &ProxyServer::onMitmCaptured);
 }
 
 void ProxyServer::onServerReadyRead()

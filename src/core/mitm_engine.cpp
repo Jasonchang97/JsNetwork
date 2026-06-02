@@ -153,7 +153,6 @@ MitmConnection::MitmConnection(QTcpSocket *clientSocket, const QString &targetHo
                                  QObject *parent)
     : QObject(parent)
     , m_clientSocket(clientSocket)
-    , m_serverSocket(new QTcpSocket(this))
     , m_targetHost(targetHost)
     , m_targetPort(targetPort)
     , m_certMgr(certMgr)
@@ -178,8 +177,8 @@ void MitmConnection::start()
         cleanup();
     });
 
-    // Start server TLS handshake in background thread (NOT a child of this, to avoid crash on cleanup)
-    auto *serverThread = new ServerHandshakeThread(m_targetHost, m_targetPort);
+    // Start server TLS handshake in background thread
+    auto *serverThread = new ServerHandshakeThread(m_targetHost, m_targetPort, this);
     connect(serverThread, &QThread::finished, this, [this, serverThread]() {
         if (!serverThread->m_ok) {
             logMsg("MITM: server TLS FAILED for " + m_targetHost);
@@ -207,7 +206,7 @@ void MitmConnection::start()
 #endif
 
         // Generate domain cert in background thread (RSA key gen ~30-200ms)
-        auto *certThread = new CertGenThread(m_targetHost, m_certMgr);
+        auto *certThread = new CertGenThread(m_targetHost, m_certMgr, this);
         connect(certThread, &QThread::finished, this, [this, certThread]() {
             SSL_CTX *clientCtx = certThread->m_ctx;
             certThread->deleteLater();
@@ -555,7 +554,8 @@ MitmConnection *MitmEngine::intercept(QTcpSocket *clientSocket,
 
     connect(conn, &MitmConnection::requestCaptured,
             this, &MitmEngine::requestCaptured);
-    connect(conn, &MitmConnection::finished, conn, &QObject::deleteLater);
+    // Note: finished -> deleteLater is connected by the caller (ProxyServer)
+    // who also needs to clean up the client socket and Connection struct.
 
     conn->start();
     return conn;
