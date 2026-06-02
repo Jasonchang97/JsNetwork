@@ -378,39 +378,6 @@ elseif(WIN32)
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources/" DESTINATION bin/resources)
 endif()
 
-# ===== LSP Provider (Winsock Layered Service Provider) =====
-if(WIN32)
-    # LSP DLL - injected into all processes via Winsock catalog
-    add_library(jsnetwork_lsp SHARED
-        src/injector/lsp_provider.cpp
-        src/injector/lsp_provider.h
-        src/injector/jsnetwork_lsp.def
-    )
-    target_link_libraries(jsnetwork_lsp PRIVATE ws2_32)
-    target_include_directories(jsnetwork_lsp PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
-    set_target_properties(jsnetwork_lsp PROPERTIES
-        OUTPUT_NAME "jsnetwork_lsp"
-    )
-
-    # LSP Installer/Uninstaller
-    add_executable(lsp_installer
-        src/injector/lsp_installer.cpp
-    )
-    target_link_libraries(lsp_installer PRIVATE ws2_32)
-    set_target_properties(lsp_installer PROPERTIES
-        OUTPUT_NAME "lsp_installer"
-    )
-
-    # Copy LSP DLL and installer to main app output directory
-    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:jsnetwork_lsp> "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:lsp_installer> "$<TARGET_FILE_DIR:${PROJECT_NAME}>"
-        COMMENT "Copying LSP DLL and installer to output"
-    )
-endif()
-
 # ===== Packaging =====
 set(CPACK_PACKAGE_NAME "JsNetwork")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")

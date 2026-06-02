@@ -59,4 +59,3 @@ begin
 end;
 
 [UninstallRun]
-Filename: "{app}\lsp_installer.exe"; Parameters: "uninstall"; Flags: runhidden

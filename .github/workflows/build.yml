@@ -61,9 +61,6 @@ jobs:
           # Qt SQL plugins (SQLite driver for traffic storage)
           mkdir staging\sqldrivers -ErrorAction SilentlyContinue
           cp "$rel\sqldrivers\qsqlite.dll" staging\sqldrivers\ -ErrorAction SilentlyContinue
-          # LSP
-          cp "$rel\jsnetwork_lsp.dll" staging\
-          cp "$rel\lsp_installer.exe" staging\
           # WinDivert DLL and drivers
           cp "$rel\WinDivert.dll" staging\ -ErrorAction SilentlyContinue
           cp "$rel\WinDivert64.sys" staging\ -ErrorAction SilentlyContinue

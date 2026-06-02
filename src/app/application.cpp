@@ -29,9 +29,7 @@
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
-#include <ws2spi.h>
 #include <windows.h>
-#include <shellapi.h>
 #endif
 
 static void logMsg(const QString &msg) {
@@ -132,15 +130,6 @@ Application::~Application()
     m_proxyServer->stop();
     logMsg("Proxy server stopped");
 
-#ifdef Q_OS_WIN
-    if (m_proxyActiveEvent) {
-        ResetEvent((HANDLE)m_proxyActiveEvent);
-        CloseHandle(m_proxyActiveEvent);
-        m_proxyActiveEvent = nullptr;
-        logMsg("Named Event reset and closed - LSP will pass through directly");
-    }
-#endif
-
     if (ProxyConfig::isSystemProxyEnabled()) {
         if (ProxyConfig::disableSystemProxy()) {
             logMsg("System proxy disabled successfully");
@@ -154,24 +143,7 @@ Application::~Application()
     logMsg("Application shutdown complete");
 }
 
-bool Application::isRunningAsAdmin()
-{
-#ifdef Q_OS_WIN
-    BOOL isAdmin = FALSE;
-    PSID adminGroup = nullptr;
-    SID_IDENTIFIER_AUTHORITY ntAuth = SECURITY_NT_AUTHORITY;
-    if (AllocateAndInitializeSid(&ntAuth, 2, SECURITY_BUILTIN_DOMAIN_RID,
-                                 DOMAIN_ALIAS_RID_ADMINS, 0, 0, 0, 0, 0, 0, &adminGroup)) {
-        CheckTokenMembership(nullptr, adminGroup, &isAdmin);
-        FreeSid(adminGroup);
-    }
-    return isAdmin;
-#else
-    return geteuid() == 0;
-#endif
-}
-
-void Application::checkPreviousCrashLsp()
+void Application::checkPreviousCrashCleanup()
 {
     // Check if proxy was left enabled from a previous crash
     if (ProxyConfig::isSystemProxyEnabled()) {
@@ -184,15 +156,6 @@ void Application::checkPreviousCrashLsp()
     } else {
         logMsg("Startup: no stale proxy settings detected");
     }
-
-#ifdef Q_OS_WIN
-    // Check if Named Event was left signaled from a previous crash
-    HANDLE hEvent = OpenEventW(EVENT_ALL_ACCESS, FALSE, L"Global\\JsNetwork_ProxyActive_9527");
-    if (hEvent) {
-        CloseHandle(hEvent);
-        logMsg("Startup: detected stale Named Event from previous session (will be recreated)");
-    }
-#endif
 }
 
 void Application::start()
@@ -200,7 +163,7 @@ void Application::start()
     logMsg(QString("=== JsNetwork v%1 starting ===").arg(JSNETWORK_VERSION));
 
     // Clean up any stale proxy settings from previous crash
-    checkPreviousCrashLsp();
+    checkPreviousCrashCleanup();
 
     m_theme->loadPreference();
 
@@ -270,17 +233,6 @@ void Application::start()
         logMsg("Certificate NOT ready - HTTPS decrypt unavailable");
     }
 
-#ifdef Q_OS_WIN
-    m_proxyActiveEvent = CreateEventW(nullptr, TRUE, TRUE,
-                                       L"Global\\JsNetwork_ProxyActive_9527");
-    if (m_proxyActiveEvent) {
-        SetEvent((HANDLE)m_proxyActiveEvent);
-        logMsg("Named Event created (signaled) - LSP will redirect traffic");
-    } else {
-        logMsg(QString("Failed to create Named Event, error=%1").arg(GetLastError()));
-    }
-#endif
-
     m_proxyServer->start(9527);
 
     if (ProxyConfig::enableSystemProxy(9527)) {
@@ -288,10 +240,6 @@ void Application::start()
     } else {
         logMsg("Failed to set system proxy");
     }
-
-#ifdef Q_OS_WIN
-    installLspIfNeeded();
-#endif
 
     // Save m_mainWindow pointer to a volatile stack local BEFORE any calls
     // that clobber the callee-saved EBX register (which holds `this` on x86 MSVC).
@@ -348,106 +296,3 @@ void Application::initCertificate()
     }
 }
 
-void Application::installLspIfNeeded()
-{
-#ifdef Q_OS_WIN
-    // Check LSP status directly via Winsock API (no external process needed)
-    {
-        WSADATA wsa;
-        WSAStartup(MAKEWORD(2, 2), &wsa);
-
-        int err = 0;
-        DWORD bufLen = 0;
-        WSCEnumProtocols(NULL, NULL, &bufLen, &err);
-        if (bufLen > 0) {
-            WSAPROTOCOL_INFOW *infos = (WSAPROTOCOL_INFOW *)malloc(bufLen);
-            int n = WSCEnumProtocols(NULL, infos, &bufLen, &err);
-            // {A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
-            static const GUID lspGuid =
-                {0xa1b2c3d4, 0xe5f6, 0x7890, {0xab, 0xcd, 0xef, 0x12, 0x34, 0x56, 0x78, 0x90}};
-            for (int i = 0; i < n; i++) {
-                if (IsEqualGUID(infos[i].ProviderId, lspGuid)) {
-                    free(infos);
-                    WSACleanup();
-                    logMsg("LSP already installed (with Named Event control)");
-                    return;
-                }
-            }
-            free(infos);
-        }
-        WSACleanup();
-    }
-
-    logMsg("LSP not installed, requesting elevated installation...");
-
-    QString appDir = QCoreApplication::applicationDirPath();
-    QString installer64Path = appDir + "/lsp_installer64.exe";
-    QString lspDll64Path = appDir + "/x64/jsnetwork_lsp.dll";
-    QString lspDll32Path = appDir + "/jsnetwork_lsp.dll";
-
-    bool have64 = QFile::exists(installer64Path) && QFile::exists(lspDll64Path);
-
-    if (have64) {
-        QString nativeInstallerPath = QDir::toNativeSeparators(installer64Path);
-        QString params = QString("install \"%1\" \"%2\"").arg(
-            QDir::toNativeSeparators(lspDll64Path),
-            QDir::toNativeSeparators(lspDll32Path));
-
-        SHELLEXECUTEINFOW sei = {};
-        sei.cbSize = sizeof(sei);
-        sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-        sei.lpVerb = L"runas";
-        sei.lpFile = (LPCWSTR)nativeInstallerPath.utf16();
-        sei.lpParameters = (LPCWSTR)params.utf16();
-        sei.nShow = SW_HIDE;
-
-        if (ShellExecuteExW(&sei)) {
-            WaitForSingleObject(sei.hProcess, 30000);
-            DWORD exitCode = 0;
-            GetExitCodeProcess(sei.hProcess, &exitCode);
-            CloseHandle(sei.hProcess);
-
-            if (exitCode == 0) {
-                logMsg("LSP installed successfully (64-bit installer, both catalogs)");
-            } else {
-                logMsg(QString("LSP install failed, exit code=%1").arg(exitCode));
-            }
-        } else {
-            logMsg(QString("Failed to launch elevated installer, error=%1").arg(GetLastError()));
-        }
-    } else {
-        QString installerPath = appDir + "/lsp_installer.exe";
-        if (!QFile::exists(lspDll32Path)) {
-            logMsg("LSP DLL not found at: " + lspDll32Path);
-            return;
-        }
-
-        QString nativeInstallerPath = QDir::toNativeSeparators(installerPath);
-        QString params = QString("install \"%1\"").arg(
-            QDir::toNativeSeparators(lspDll32Path));
-
-        SHELLEXECUTEINFOW sei = {};
-        sei.cbSize = sizeof(sei);
-        sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-        sei.lpVerb = L"runas";
-        sei.lpFile = (LPCWSTR)nativeInstallerPath.utf16();
-        sei.lpParameters = (LPCWSTR)params.utf16();
-        sei.nShow = SW_HIDE;
-
-        if (ShellExecuteExW(&sei)) {
-            WaitForSingleObject(sei.hProcess, 30000);
-            DWORD exitCode = 0;
-            GetExitCodeProcess(sei.hProcess, &exitCode);
-            CloseHandle(sei.hProcess);
-
-            if (exitCode == 0) {
-                logMsg("LSP 32-bit installed successfully");
-            } else {
-                logMsg(QString("LSP 32-bit install failed, exit code=%1").arg(exitCode));
-            }
-        } else {
-            logMsg(QString("Failed to launch elevated installer, error=%1").arg(GetLastError()));
-        }
-    }
-#endif
-}

@@ -240,7 +240,7 @@ void ProxyServer::onClientReadyRead()
         return;
     }
 
-    // Detect direct TLS ClientHello (from LSP redirect, no CONNECT header)
+    // Detect direct TLS ClientHello (no CONNECT header, e.g. from system proxy)
     // TLS record: ContentType=0x16, Version=0x03xx
     // Use peek() to inspect without consuming - MitmConnection needs the data
     if (conn->requestBuffer.isEmpty() && client->bytesAvailable() >= 2) {
