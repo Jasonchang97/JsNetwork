@@ -87,17 +87,56 @@ void WfpCaptureThread::run()
         bool outbound = (addr.Outbound != 0);
         bool loopback = (addr.Loopback != 0);
 
-        if (loopback) {
-            if (tcpHdr) {
-                UINT16 srcPort = ntohs(tcpHdr->SrcPort);
-                UINT16 dstPort = ntohs(tcpHdr->DstPort);
-                if (srcPort == 9527 || dstPort == 9527) continue;
+        // Skip ALL loopback traffic (local IPC, not interesting for network monitoring)
+        if (loopback) continue;
+
+        UINT16 srcPort = 0, dstPort = 0;
+        if (tcpHdr) {
+            srcPort = ntohs(tcpHdr->SrcPort);
+            dstPort = ntohs(tcpHdr->DstPort);
+        } else if (udpHdr) {
+            srcPort = ntohs(udpHdr->SrcPort);
+            dstPort = ntohs(udpHdr->DstPort);
+        }
+
+        // Skip common UDP noise: DNS, mDNS, LLMNR, NetBIOS, SSDP, DHCP, TFTP
+        if (udpHdr) {
+            if (srcPort == 53 || dstPort == 53 ||
+                srcPort == 5353 || dstPort == 5353 ||
+                srcPort == 5355 || dstPort == 5355 ||
+                srcPort == 137 || dstPort == 137 ||
+                srcPort == 138 || dstPort == 138 ||
+                srcPort == 1900 || dstPort == 1900 ||
+                srcPort == 67 || dstPort == 67 ||
+                srcPort == 68 || dstPort == 68 ||
+                srcPort == 69 || dstPort == 69) {
+                continue;
             }
-            if (udpHdr) {
-                UINT16 srcPort = ntohs(udpHdr->SrcPort);
-                UINT16 dstPort = ntohs(udpHdr->DstPort);
-                if (srcPort == 9527 || dstPort == 9527) continue;
-            }
+            // Skip all other UDP — we only care about TCP (HTTP/HTTPS)
+            continue;
+        }
+
+        // Skip common non-HTTP TCP ports (SSH, SMTP, IMAP, RDP, SMB, etc.)
+        if (tcpHdr) {
+            auto isNoisePort = [](UINT16 port) -> bool {
+                return port == 22 ||    // SSH
+                       port == 25 ||    // SMTP
+                       port == 110 ||   // POP3
+                       port == 143 ||   // IMAP
+                       port == 465 ||   // SMTPS
+                       port == 587 ||   // SMTP submission
+                       port == 993 ||   // IMAPS
+                       port == 995 ||   // POP3S
+                       port == 3389 ||  // RDP
+                       port == 445 ||   // SMB
+                       port == 139 ||   // NetBIOS
+                       port == 3306 ||  // MySQL
+                       port == 5432 ||  // PostgreSQL
+                       port == 6379 ||  // Redis
+                       port == 1433 ||  // MSSQL
+                       port == 27017;   // MongoDB
+            };
+            if (isNoisePort(srcPort) || isNoisePort(dstPort)) continue;
         }
 
         if (tcpHdr && payloadLen > 0) {
@@ -117,8 +156,6 @@ void WfpCaptureThread::run()
             } else {
                 continue;
             }
-            UINT16 srcPort = ntohs(tcpHdr->SrcPort);
-            UINT16 dstPort = ntohs(tcpHdr->DstPort);
             WfpConnKey key = WfpConnKey::canonical(QString(srcBuf), srcPort, QString(dstBuf), dstPort);
             QMutexLocker lock(&m_mutex);
             auto it = m_streams.find(key);
@@ -131,7 +168,16 @@ void WfpCaptureThread::run()
     QMutexLocker lock(&m_mutex);
     for (auto it = m_streams.begin(); it != m_streams.end(); ++it) {
         WfpTcpStream &stream = it.value();
-        if (!stream.requestData.isEmpty() || !stream.sniHost.isEmpty()) {
+
+        bool shouldEmit = false;
+        if (stream.isHttps) {
+            shouldEmit = !stream.sniHost.isEmpty();
+        } else {
+            shouldEmit = !stream.requestData.isEmpty()
+                      && isValidHttpRequest(stream.requestData);
+        }
+
+        if (shouldEmit) {
             RequestItem item;
             item.id = m_nextId++;
             item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
@@ -146,12 +192,12 @@ void WfpCaptureThread::run()
                 item.path = stream.sniHost + ":" + QString::number(stream.dstPort);
                 item.url = "https://" + item.host;
             } else {
-                if (!stream.requestData.isEmpty()) {
-                    HttpParser::parseRequest(stream.requestData, item);
-                    if (!stream.responseData.isEmpty()) {
-                        HttpParser::parseResponse(stream.responseData, item);
-                    }
+                HttpParser::parseRequest(stream.requestData, item);
+                if (!stream.responseData.isEmpty()) {
+                    HttpParser::parseResponse(stream.responseData, item);
                 }
+                if (item.host.isEmpty()) item.host = stream.dstIp;
+                if (item.url.isEmpty()) item.url = stream.dstIp + ":" + QString::number(stream.dstPort);
             }
             emit httpCaptured(item);
         }
@@ -237,9 +283,33 @@ void WfpCaptureThread::processTcpPacket(void *ipHdrVoid, void *tcpHdrVoid,
     checkStreamComplete(key, stream);
 }
 
+static bool isValidHttpRequest(const QByteArray &data)
+{
+    if (data.size() < 10) return false;
+    // Check if data starts with a valid HTTP method
+    static const char *methods[] = {
+        "GET ", "POST ", "PUT ", "DELETE ", "HEAD ", "OPTIONS ", "PATCH ", "CONNECT "
+    };
+    for (const char *m : methods) {
+        if (data.startsWith(m)) return true;
+    }
+    return false;
+}
+
 void WfpCaptureThread::checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream)
 {
+    // For HTTPS, only emit if we have SNI (meaning it's a real TLS connection)
+    if (stream.isHttps) {
+        if (stream.sniHost.isEmpty()) return;
+        // HTTPS streams are emitted on FIN/RST or stale timeout, not here
+        return;
+    }
+
+    // For HTTP, validate that request looks like HTTP
     if (stream.requestData.isEmpty() || stream.responseData.isEmpty())
+        return;
+
+    if (!isValidHttpRequest(stream.requestData))
         return;
 
     QByteArray respData = stream.responseData;
@@ -274,16 +344,11 @@ void WfpCaptureThread::checkStreamComplete(const WfpConnKey &key, WfpTcpStream &
     item.requestSize = stream.requestData.size();
     item.responseSize = stream.responseData.size();
 
-    if (stream.isHttps) {
-        item.host = stream.sniHost.isEmpty() ? stream.dstIp : stream.sniHost;
-        item.method = "CONNECT";
-        item.path = item.host + ":" + QString::number(stream.dstPort);
-        item.url = "https://" + item.host;
-        item.protocol = "HTTPS";
-    } else {
-        HttpParser::parseRequest(stream.requestData, item);
-        HttpParser::parseResponse(stream.responseData, item);
-    }
+    HttpParser::parseRequest(stream.requestData, item);
+    HttpParser::parseResponse(stream.responseData, item);
+
+    if (item.host.isEmpty()) item.host = stream.dstIp;
+    if (item.url.isEmpty()) item.url = stream.dstIp + ":" + QString::number(stream.dstPort);
 
     emit httpCaptured(item);
     m_streams.remove(key);
@@ -296,7 +361,20 @@ void WfpCaptureThread::emitStaleStreams()
     for (auto it = m_streams.begin(); it != m_streams.end(); ) {
         if (now - it.value().startTime > 3000) {
             WfpTcpStream &stream = it.value();
-            if (!stream.requestData.isEmpty() || !stream.sniHost.isEmpty()) {
+
+            // Only emit streams that have meaningful data
+            bool shouldEmit = false;
+
+            if (stream.isHttps) {
+                // Only emit HTTPS if we have SNI (real TLS connection)
+                shouldEmit = !stream.sniHost.isEmpty();
+            } else {
+                // Only emit HTTP if request looks like valid HTTP
+                shouldEmit = !stream.requestData.isEmpty()
+                          && isValidHttpRequest(stream.requestData);
+            }
+
+            if (shouldEmit) {
                 RequestItem item;
                 item.id = m_nextId++;
                 item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
@@ -311,12 +389,12 @@ void WfpCaptureThread::emitStaleStreams()
                     item.path = stream.sniHost + ":" + QString::number(stream.dstPort);
                     item.url = "https://" + item.host;
                 } else {
-                    if (!stream.requestData.isEmpty()) {
-                        HttpParser::parseRequest(stream.requestData, item);
-                        if (!stream.responseData.isEmpty()) {
-                            HttpParser::parseResponse(stream.responseData, item);
-                        }
+                    HttpParser::parseRequest(stream.requestData, item);
+                    if (!stream.responseData.isEmpty()) {
+                        HttpParser::parseResponse(stream.responseData, item);
                     }
+                    if (item.host.isEmpty()) item.host = stream.dstIp;
+                    if (item.url.isEmpty()) item.url = stream.dstIp + ":" + QString::number(stream.dstPort);
                 }
                 emit httpCaptured(item);
             }
@@ -447,7 +525,9 @@ bool WfpCapture::start()
         return false;
     }
 
-    const char *filter = "tcp or udp";
+    // Only capture TCP — UDP is filtered out anyway (DNS, mDNS, etc.)
+    // Skip loopback at kernel level to reduce noise
+    const char *filter = "tcp and !loopback";
     m_wdHandle = m_api.open(filter, 0, 0, WINDIVERT_FLAG_SNIFF | WINDIVERT_FLAG_RECV_ONLY);
     if (!m_wdHandle || m_wdHandle == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
