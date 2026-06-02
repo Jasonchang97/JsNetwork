@@ -19,6 +19,7 @@
 #include <QDebug>
 #include <QTimer>
 #include <QProcess>
+#include <QMetaType>
 #include <cstdlib>
 #include <csignal>
 
@@ -84,6 +85,11 @@ Application::Application(QObject *parent)
     , m_mainWindow(std::make_unique<MainWindow>(m_mockEngine.get(), m_theme.get(),
                                                  m_storage.get(), m_harExporter.get()))
 {
+    // Register RequestItem for queued signal/slot connections across threads.
+    // Without this, Qt does a shallow memcpy instead of proper copy construction,
+    // causing use-after-free when the original goes out of scope.
+    qRegisterMetaType<RequestItem>("RequestItem");
+
     connect(m_proxyServer.get(), &ProxyServer::requestCaptured,
             m_mainWindow.get(), &MainWindow::onRequestCaptured);
     connect(m_proxyServer.get(), &ProxyServer::requestCaptured,

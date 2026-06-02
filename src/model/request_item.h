@@ -4,6 +4,7 @@
 #include <QByteArray>
 #include <QDateTime>
 #include <QMap>
+#include <QMetaType>
 
 struct RequestItem {
     int id = 0;
@@ -40,3 +41,5 @@ struct RequestItem {
         return "gray";
     }
 };
+
+Q_DECLARE_METATYPE(RequestItem)
