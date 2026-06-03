@@ -122,12 +122,6 @@ void WfpCaptureThread::emitStream(const WfpTcpStream &stream, bool force)
 {
     // Filter out noise during normal operation (not on shutdown)
     if (!force) {
-        // When MITM is active, the proxy handles HTTPS with full content.
-        // Skip bare CONNECT metadata from WinDivert to avoid duplicates.
-        if (stream.isHttps && m_mitmActive) {
-            return;
-        }
-
         // For HTTP, only emit if we have actual HTTP content (request or response data)
         if (!stream.isHttps) {
             bool hasHttpRequest = !stream.requestData.isEmpty()
@@ -138,6 +132,8 @@ void WfpCaptureThread::emitStream(const WfpTcpStream &stream, bool force)
                 return; // No parseable HTTP content — skip
             }
         }
+        // HTTPS: always emit. Direct connections from apps (WPS, etc.) bypass
+        // the proxy and only WinDivert can see them. Show IP/SNI/size/timing.
     }
 
     RequestItem item;
