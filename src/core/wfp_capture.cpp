@@ -98,8 +98,8 @@ QString WfpCaptureThread::reverseDnsLookup(const QString &ip)
         if (inet_pton(AF_INET6, ipBytes.constData(), &addr6->sin6_addr) == 1) {
             addrLen = sizeof(sockaddr_in6);
         } else {
-            m_dnsCache[ip] = {};
-            return {};
+            m_dnsCache[ip] = QString();
+            return QString();
         }
     }
 
@@ -114,8 +114,8 @@ QString WfpCaptureThread::reverseDnsLookup(const QString &ip)
         }
     }
 
-    m_dnsCache[ip] = {}; // Cache miss to avoid repeated lookups
-    return {};
+    m_dnsCache[ip] = QString(); // Cache miss to avoid repeated lookups
+    return QString();
 }
 
 void WfpCaptureThread::emitStream(const WfpTcpStream &stream)
