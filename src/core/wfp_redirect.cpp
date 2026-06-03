@@ -30,8 +30,8 @@ static void redirectLog(const QString &msg) {
 // WfpRedirectThread
 // ============================================================================
 
-WfpRedirectThread::WfpRedirectThread(const WinDivertApi *api, quint16 proxyPort, QObject *parent)
-    : QThread(parent), m_api(api), m_proxyPort(proxyPort)
+WfpRedirectThread::WfpRedirectThread(const WinDivertApi *api, void *handle, quint16 proxyPort, QObject *parent)
+    : QThread(parent), m_api(api), m_handle(handle), m_proxyPort(proxyPort)
 {
 }
 
@@ -271,8 +271,7 @@ bool WfpRedirect::start(quint16 proxyPort)
         return false;
     }
 
-    m_thread = new WfpRedirectThread(&m_api, proxyPort, this);
-    m_thread->m_handle = m_wdHandle;
+    m_thread = new WfpRedirectThread(&m_api, m_wdHandle, proxyPort, this);
     m_thread->start();
 
     redirectLog("WinDivert redirect started on port " + QString::number(proxyPort));

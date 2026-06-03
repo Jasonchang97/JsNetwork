@@ -6,8 +6,7 @@
 #include <QMutex>
 #include <QPair>
 #include <winsock2.h>
-
-struct WinDivertApi;
+#include "wfp_capture.h"
 
 // Tracks a redirected connection's original destination
 struct RedirectConn {
@@ -21,7 +20,7 @@ struct RedirectConn {
 class WfpRedirectThread : public QThread {
     Q_OBJECT
 public:
-    WfpRedirectThread(const WinDivertApi *api, quint16 proxyPort, QObject *parent = nullptr);
+    WfpRedirectThread(const WinDivertApi *api, void *handle, quint16 proxyPort, QObject *parent = nullptr);
     void run() override;
     void requestStop();
 
@@ -33,9 +32,9 @@ private:
     void cleanupStale();
 
     const WinDivertApi *m_api;
+    void *m_handle;
     quint16 m_proxyPort;
     volatile bool m_stopRequested = false;
-    void *m_handle = nullptr;
 
     // clientIp:clientPort → original destination
     QMap<QPair<quint32, quint16>, RedirectConn> m_connections;
