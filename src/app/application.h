@@ -13,7 +13,9 @@ class TrafficStorage;
 class HarExporter;
 class ProxyConfig;
 class PacketCapture;
+#ifdef Q_OS_WIN
 class WfpRedirect;
+#endif
 
 class Application : public QObject
 {
@@ -38,6 +40,8 @@ private:
     std::unique_ptr<HarExporter> m_harExporter;
     std::unique_ptr<MainWindow> m_mainWindow;
     std::unique_ptr<PacketCapture> m_packetCapture;
+#ifdef Q_OS_WIN
     std::unique_ptr<WfpRedirect> m_wfpRedirect;
+#endif
     bool m_autoEnableMitm = false;
 };
