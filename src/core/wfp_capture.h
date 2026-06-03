@@ -4,6 +4,7 @@
 #include <QThread>
 #include <QByteArray>
 #include <QMap>
+#include <QHash>
 #include <QMutex>
 #include <QDateTime>
 #include "model/request_item.h"
@@ -95,13 +96,16 @@ private:
                           const quint8 *payload, unsigned int payloadLen, bool outbound, bool isIpv6);
     void checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream);
     void emitStaleStreams();
+    void emitStream(const WfpTcpStream &stream);
     static QString extractSniFromClientHello(const QByteArray &data);
+    QString reverseDnsLookup(const QString &ip);
 
     void *m_handle;
     const WinDivertApi *m_api;
     volatile bool m_stopRequested = false;
 
     QMap<WfpConnKey, WfpTcpStream> m_streams;
+    QHash<QString, QString> m_dnsCache; // IP -> hostname
     QMutex m_mutex;
     int m_nextId = 1;
     int m_packetCount = 0;

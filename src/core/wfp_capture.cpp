@@ -55,6 +55,122 @@ static bool isValidHttpRequest(const QByteArray &data)
     return false;
 }
 
+static QString extractHostFromRequest(const QByteArray &data)
+{
+    // Try to find Host header even in partial HTTP request data
+    int headerEnd = data.indexOf("\r\n\r\n");
+    QByteArray headers = (headerEnd >= 0) ? data.left(headerEnd) : data;
+    int hostIdx = headers.indexOf("Host:");
+    if (hostIdx < 0) hostIdx = headers.indexOf("host:");
+    if (hostIdx < 0) hostIdx = headers.indexOf("HOST:");
+    if (hostIdx >= 0) {
+        int lineEnd = headers.indexOf("\r\n", hostIdx);
+        if (lineEnd < 0) lineEnd = headers.size();
+        QString hostValue = QString::fromLatin1(headers.mid(hostIdx + 5, lineEnd - hostIdx - 5).trimmed());
+        // Strip port if present
+        int colonIdx = hostValue.lastIndexOf(':');
+        if (colonIdx > 0) hostValue = hostValue.left(colonIdx);
+        return hostValue;
+    }
+    return {};
+}
+
+QString WfpCaptureThread::reverseDnsLookup(const QString &ip)
+{
+    // Check cache first
+    auto it = m_dnsCache.find(ip);
+    if (it != m_dnsCache.end()) return it.value();
+
+    // Do reverse DNS lookup using getnameinfo
+    // This blocks briefly per unique IP; cache prevents repeated lookups
+    QByteArray ipBytes = ip.toLatin1();
+    struct sockaddr_storage addr;
+    memset(&addr, 0, sizeof(addr));
+    int addrLen = 0;
+
+    struct sockaddr_in *addr4 = (struct sockaddr_in *)&addr;
+    addr4->sin_family = AF_INET;
+    if (inet_pton(AF_INET, ipBytes.constData(), &addr4->sin_addr) == 1) {
+        addrLen = sizeof(sockaddr_in);
+    } else {
+        struct sockaddr_in6 *addr6 = (struct sockaddr_in6 *)&addr;
+        addr6->sin6_family = AF_INET6;
+        if (inet_pton(AF_INET6, ipBytes.constData(), &addr6->sin6_addr) == 1) {
+            addrLen = sizeof(sockaddr_in6);
+        } else {
+            m_dnsCache[ip] = {};
+            return {};
+        }
+    }
+
+    char host[NI_MAXHOST];
+    int ret = getnameinfo((struct sockaddr *)&addr, addrLen,
+                          host, sizeof(host), nullptr, 0, 0);
+    if (ret == 0) {
+        QString hostname = QString::fromLatin1(host);
+        if (hostname != ip && !hostname.endsWith(".in-addr.arpa") && !hostname.endsWith(".ip6.arpa")) {
+            m_dnsCache[ip] = hostname;
+            return hostname;
+        }
+    }
+
+    m_dnsCache[ip] = {}; // Cache miss to avoid repeated lookups
+    return {};
+}
+
+void WfpCaptureThread::emitStream(const WfpTcpStream &stream)
+{
+    RequestItem item;
+    item.id = m_nextId++;
+    item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
+    item.duration = QDateTime::currentMSecsSinceEpoch() - stream.startTime;
+    item.requestSize = stream.requestData.size();
+    item.responseSize = stream.responseData.size();
+
+    if (stream.isHttps) {
+        item.protocol = "HTTPS";
+        item.method = "CONNECT";
+        // Use SNI if available, otherwise reverse DNS lookup
+        QString host = stream.sniHost;
+        if (host.isEmpty()) {
+            host = reverseDnsLookup(stream.dstIp);
+        }
+        if (host.isEmpty()) host = stream.dstIp;
+        item.host = host;
+        item.path = host + ":" + QString::number(stream.dstPort);
+        item.url = "https://" + host;
+    } else {
+        item.protocol = "HTTP";
+        // Parse what we have — may be partial data from fragmented TCP
+        if (!stream.requestData.isEmpty()) {
+            HttpParser::parseRequest(stream.requestData, item);
+        }
+        if (!stream.responseData.isEmpty()) {
+            HttpParser::parseResponse(stream.responseData, item);
+        }
+        // Fallback: extract Host from partial request headers if parser didn't find it
+        if (item.host.isEmpty() && !stream.requestData.isEmpty()) {
+            item.host = extractHostFromRequest(stream.requestData);
+        }
+        // Fallback: reverse DNS lookup
+        if (item.host.isEmpty()) {
+            item.host = reverseDnsLookup(stream.dstIp);
+        }
+        if (item.host.isEmpty()) item.host = stream.dstIp;
+        if (item.url.isEmpty()) {
+            // Build URL from host and first line of request
+            if (!stream.requestData.isEmpty()) {
+                int firstLineEnd = stream.requestData.indexOf("\r\n");
+                QByteArray firstLine = (firstLineEnd > 0) ? stream.requestData.left(firstLineEnd) : stream.requestData.left(200);
+                item.url = QString::fromLatin1(firstLine);
+            } else {
+                item.url = item.host + ":" + QString::number(stream.dstPort);
+            }
+        }
+    }
+    emit httpCaptured(item);
+}
+
 void WfpCaptureThread::run()
 {
     if (!m_handle || !m_api) return;
@@ -129,27 +245,15 @@ void WfpCaptureThread::run()
             continue;
         }
 
-        // Skip common non-HTTP TCP ports (SSH, SMTP, IMAP, RDP, SMB, etc.)
+        // Only skip truly non-HTTP system ports (keep it minimal to avoid missing traffic)
         if (tcpHdr) {
-            auto isNoisePort = [](UINT16 port) -> bool {
+            auto isSystemPort = [](UINT16 port) -> bool {
                 return port == 22 ||    // SSH
-                       port == 25 ||    // SMTP
-                       port == 110 ||   // POP3
-                       port == 143 ||   // IMAP
-                       port == 465 ||   // SMTPS
-                       port == 587 ||   // SMTP submission
-                       port == 993 ||   // IMAPS
-                       port == 995 ||   // POP3S
                        port == 3389 ||  // RDP
                        port == 445 ||   // SMB
-                       port == 139 ||   // NetBIOS
-                       port == 3306 ||  // MySQL
-                       port == 5432 ||  // PostgreSQL
-                       port == 6379 ||  // Redis
-                       port == 1433 ||  // MSSQL
-                       port == 27017;   // MongoDB
+                       port == 139;     // NetBIOS
             };
-            if (isNoisePort(srcPort) || isNoisePort(dstPort)) continue;
+            if (isSystemPort(srcPort) || isSystemPort(dstPort)) continue;
         }
 
         if (tcpHdr && payloadLen > 0) {
@@ -175,21 +279,7 @@ void WfpCaptureThread::run()
             if (it != m_streams.end()) {
                 WfpTcpStream &stream = it.value();
                 if (stream.isHttps) {
-                    // HTTPS: emit on FIN/RST if we have SNI
-                    if (!stream.sniHost.isEmpty()) {
-                        RequestItem item;
-                        item.id = m_nextId++;
-                        item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
-                        item.host = stream.sniHost;
-                        item.protocol = "HTTPS";
-                        item.method = "CONNECT";
-                        item.path = stream.sniHost + ":" + QString::number(stream.dstPort);
-                        item.url = "https://" + stream.sniHost;
-                        item.duration = QDateTime::currentMSecsSinceEpoch() - stream.startTime;
-                        item.requestSize = stream.requestData.size();
-                        item.responseSize = stream.responseData.size();
-                        emit httpCaptured(item);
-                    }
+                    emitStream(stream);
                     m_streams.erase(it);
                 } else {
                     checkStreamComplete(key, stream);
@@ -200,39 +290,7 @@ void WfpCaptureThread::run()
 
     QMutexLocker lock(&m_mutex);
     for (auto it = m_streams.begin(); it != m_streams.end(); ++it) {
-        WfpTcpStream &stream = it.value();
-
-        bool shouldEmit = false;
-        if (stream.isHttps) {
-            shouldEmit = !stream.sniHost.isEmpty();
-        } else {
-            shouldEmit = !stream.requestData.isEmpty();
-        }
-
-        if (shouldEmit) {
-            RequestItem item;
-            item.id = m_nextId++;
-            item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
-            item.host = stream.sniHost.isEmpty() ? stream.dstIp : stream.sniHost;
-            item.protocol = stream.isHttps ? "HTTPS" : "HTTP";
-            item.duration = QDateTime::currentMSecsSinceEpoch() - stream.startTime;
-            item.requestSize = stream.requestData.size();
-            item.responseSize = stream.responseData.size();
-
-            if (stream.isHttps) {
-                item.method = "CONNECT";
-                item.path = stream.sniHost + ":" + QString::number(stream.dstPort);
-                item.url = "https://" + item.host;
-            } else {
-                HttpParser::parseRequest(stream.requestData, item);
-                if (!stream.responseData.isEmpty()) {
-                    HttpParser::parseResponse(stream.responseData, item);
-                }
-                if (item.host.isEmpty()) item.host = stream.dstIp;
-                if (item.url.isEmpty()) item.url = stream.dstIp + ":" + QString::number(stream.dstPort);
-            }
-            emit httpCaptured(item);
-        }
+        emitStream(it.value());
     }
     m_streams.clear();
 
@@ -361,6 +419,12 @@ void WfpCaptureThread::checkStreamComplete(const WfpConnKey &key, WfpTcpStream &
     HttpParser::parseRequest(stream.requestData, item);
     HttpParser::parseResponse(stream.responseData, item);
 
+    if (item.host.isEmpty()) {
+        item.host = extractHostFromRequest(stream.requestData);
+    }
+    if (item.host.isEmpty()) {
+        item.host = reverseDnsLookup(stream.dstIp);
+    }
     if (item.host.isEmpty()) item.host = stream.dstIp;
     if (item.url.isEmpty()) item.url = stream.dstIp + ":" + QString::number(stream.dstPort);
 
@@ -373,42 +437,8 @@ void WfpCaptureThread::emitStaleStreams()
     qint64 now = QDateTime::currentMSecsSinceEpoch();
     QMutexLocker lock(&m_mutex);
     for (auto it = m_streams.begin(); it != m_streams.end(); ) {
-        if (now - it.value().startTime > 8000) {
-            WfpTcpStream &stream = it.value();
-
-            bool shouldEmit = false;
-
-            if (stream.isHttps) {
-                shouldEmit = !stream.sniHost.isEmpty();
-            } else {
-                // Emit HTTP if we have any request data (fragments may not start with method)
-                shouldEmit = !stream.requestData.isEmpty();
-            }
-
-            if (shouldEmit) {
-                RequestItem item;
-                item.id = m_nextId++;
-                item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
-                item.host = stream.sniHost.isEmpty() ? stream.dstIp : stream.sniHost;
-                item.protocol = stream.isHttps ? "HTTPS" : "HTTP";
-                item.duration = now - stream.startTime;
-                item.requestSize = stream.requestData.size();
-                item.responseSize = stream.responseData.size();
-
-                if (stream.isHttps) {
-                    item.method = "CONNECT";
-                    item.path = stream.sniHost + ":" + QString::number(stream.dstPort);
-                    item.url = "https://" + item.host;
-                } else {
-                    HttpParser::parseRequest(stream.requestData, item);
-                    if (!stream.responseData.isEmpty()) {
-                        HttpParser::parseResponse(stream.responseData, item);
-                    }
-                    if (item.host.isEmpty()) item.host = stream.dstIp;
-                    if (item.url.isEmpty()) item.url = stream.dstIp + ":" + QString::number(stream.dstPort);
-                }
-                emit httpCaptured(item);
-            }
+        if (now - it.value().startTime > 15000) {
+            emitStream(it.value());
             it = m_streams.erase(it);
         } else {
             ++it;
