@@ -2,7 +2,9 @@
 #include "http_parser.h"
 #include "cert_manager.h"
 #include "mitm_engine.h"
+#ifdef Q_OS_WIN
 #include "wfp_redirect.h"
+#endif
 #include "compat.h"
 #include <QUrl>
 #include <QNetworkRequest>
@@ -761,9 +763,10 @@ void ProxyServer::cleanup(Connection *conn)
 }
 
 // ============================================================================
-// Transparent proxy — intercepts WinDivert-redirected connections
+// Transparent proxy — intercepts WinDivert-redirected connections (Windows only)
 // ============================================================================
 
+#ifdef Q_OS_WIN
 bool ProxyServer::startTransparent(quint16 port, WfpRedirect *redirect)
 {
     if (m_transparentServer) {
@@ -870,3 +873,4 @@ void ProxyServer::handleTransparentMitm(QTcpSocket *client, const QString &host,
         mitmConn->deleteLater();
     });
 }
+#endif // Q_OS_WIN

@@ -11,7 +11,9 @@
 class CertManager;
 class MitmEngine;
 class MitmConnection;
+#ifdef Q_OS_WIN
 class WfpRedirect;
+#endif
 
 class ProxyServer : public QObject
 {
@@ -30,8 +32,10 @@ public:
     void disableMitm();
     bool isMitmEnabled() const;
 
-    // Transparent proxy (WinDivert redirect)
+    // Transparent proxy (WinDivert redirect, Windows only)
+#ifdef Q_OS_WIN
     bool startTransparent(quint16 port, WfpRedirect *redirect);
+#endif
 
 signals:
     void requestCaptured(const RequestItem &item);
@@ -78,7 +82,9 @@ private:
     MitmEngine *m_mitmEngine = nullptr;
     bool m_mitmEnabled = false;
 
-    // Transparent proxy
+    // Transparent proxy (Windows only)
+#ifdef Q_OS_WIN
     QTcpServer *m_transparentServer = nullptr;
     WfpRedirect *m_redirect = nullptr;
+#endif
 };
