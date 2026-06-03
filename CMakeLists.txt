@@ -60,7 +60,7 @@ set(SOURCES
 )
 
 if(WIN32)
-    list(APPEND SOURCES src/core/wfp_capture.cpp)
+    list(APPEND SOURCES src/core/wfp_capture.cpp src/core/wfp_redirect.cpp)
 endif()
 
 set(HEADERS
@@ -91,7 +91,7 @@ set(HEADERS
 )
 
 if(WIN32)
-    list(APPEND HEADERS src/core/wfp_capture.h)
+    list(APPEND HEADERS src/core/wfp_capture.h src/core/wfp_redirect.h)
 endif()
 
 # App icon (macOS)

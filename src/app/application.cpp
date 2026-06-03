@@ -8,6 +8,9 @@
 #include "core/traffic_storage.h"
 #include "core/har_exporter.h"
 #include "core/packet_capture.h"
+#ifdef Q_OS_WIN
+#include "core/wfp_redirect.h"
+#endif
 #include "platform/cert_installer.h"
 #include "platform/proxy_config.h"
 #include <QStandardPaths>
@@ -127,6 +130,13 @@ Application::~Application()
     m_packetCapture->stop();
     logMsg("Packet capture stopped");
 
+#ifdef Q_OS_WIN
+    if (m_wfpRedirect) {
+        m_wfpRedirect->stop();
+        logMsg("Transparent proxy redirect stopped");
+    }
+#endif
+
     m_proxyServer->stop();
     logMsg("Proxy server stopped");
 
@@ -241,6 +251,20 @@ void Application::start()
     } else {
         logMsg("Failed to set system proxy");
     }
+
+    // Start WinDivert transparent proxy for apps that bypass system proxy
+#ifdef Q_OS_WIN
+    {
+        quint16 transparentPort = 9529;
+        m_wfpRedirect = std::make_unique<WfpRedirect>();
+        if (m_wfpRedirect->start(transparentPort)) {
+            m_proxyServer->startTransparent(transparentPort, m_wfpRedirect.get());
+            logMsg("Transparent proxy active on port " + QString::number(transparentPort));
+        } else {
+            logMsg("Transparent proxy failed to start");
+        }
+    }
+#endif
 
     // Save m_mainWindow pointer to a volatile stack local BEFORE any calls
     // that clobber the callee-saved EBX register (which holds `this` on x86 MSVC).

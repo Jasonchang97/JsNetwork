@@ -69,15 +69,19 @@ typedef int (*WinDivertHelperParsePacketFn)(const void *, unsigned int,
     void **, unsigned int *, void **, unsigned int *);
 typedef int (*WinDivertHelperFormatIPv4AddressFn)(unsigned int, char *, unsigned int);
 typedef int (*WinDivertHelperFormatIPv6AddressFn)(const unsigned int *, char *, unsigned int);
+typedef int (*WinDivertSendFn)(HANDLE_WD, const void *, unsigned int, unsigned int *, void *);
+typedef unsigned int (*WinDivertHelperCalcChecksumsFn)(void *, unsigned int, void *, unsigned long long);
 
 struct WinDivertApi {
     WinDivertOpenFn open = nullptr;
     WinDivertRecvFn recv = nullptr;
     WinDivertCloseFn close = nullptr;
     WinDivertShutdownFn shutdown = nullptr;
+    WinDivertSendFn send = nullptr;
     WinDivertHelperParsePacketFn parsePacket = nullptr;
     WinDivertHelperFormatIPv4AddressFn formatIPv4 = nullptr;
     WinDivertHelperFormatIPv6AddressFn formatIPv6 = nullptr;
+    WinDivertHelperCalcChecksumsFn calcChecksums = nullptr;
     bool loaded = false;
 };
 

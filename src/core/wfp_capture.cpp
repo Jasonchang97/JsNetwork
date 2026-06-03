@@ -555,9 +555,11 @@ bool WfpCapture::loadWinDivert()
     m_api.recv = (WinDivertRecvFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertRecv");
     m_api.close = (WinDivertCloseFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertClose");
     m_api.shutdown = (WinDivertShutdownFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertShutdown");
+    m_api.send = (WinDivertSendFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertSend");
     m_api.parsePacket = (WinDivertHelperParsePacketFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertHelperParsePacket");
     m_api.formatIPv4 = (WinDivertHelperFormatIPv4AddressFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertHelperFormatIPv4Address");
     m_api.formatIPv6 = (WinDivertHelperFormatIPv6AddressFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertHelperFormatIPv6Address");
+    m_api.calcChecksums = (WinDivertHelperCalcChecksumsFn)GetProcAddress((HMODULE)m_dllHandle, "WinDivertHelperCalcChecksums");
 
     if (!m_api.open || !m_api.recv || !m_api.close || !m_api.shutdown) {
         wfpLog("WinDivert.dll missing required functions");

@@ -2,6 +2,7 @@
 #include "http_parser.h"
 #include "cert_manager.h"
 #include "mitm_engine.h"
+#include "wfp_redirect.h"
 #include "compat.h"
 #include <QUrl>
 #include <QNetworkRequest>
@@ -757,4 +758,115 @@ void ProxyServer::cleanup(Connection *conn)
         conn->server->deleteLater();
     }
     delete conn;
+}
+
+// ============================================================================
+// Transparent proxy — intercepts WinDivert-redirected connections
+// ============================================================================
+
+bool ProxyServer::startTransparent(quint16 port, WfpRedirect *redirect)
+{
+    if (m_transparentServer) {
+        m_transparentServer->close();
+        m_transparentServer->deleteLater();
+    }
+
+    m_redirect = redirect;
+    m_transparentServer = new QTcpServer(this);
+    connect(m_transparentServer, &QTcpServer::newConnection,
+            this, &ProxyServer::onTransparentConnection);
+
+    bool ok = m_transparentServer->listen(QHostAddress::LocalHost, port);
+    if (ok) {
+        logMsg("Transparent proxy listening on 127.0.0.1:" + QString::number(port));
+    } else {
+        logMsg("Transparent proxy FAILED to listen on 127.0.0.1:" + QString::number(port)
+               + " error: " + m_transparentServer->errorString());
+    }
+    return ok;
+}
+
+void ProxyServer::onTransparentConnection()
+{
+    while (m_transparentServer->hasPendingConnections()) {
+        QTcpSocket *client = m_transparentServer->nextPendingConnection();
+
+        // Look up original destination from the redirect table
+        quint32 clientIp = client->peerAddress().toIPv4Address();
+        quint16 clientPort = client->peerPort();
+        quint32 origDstIp = 0;
+        quint16 origDstPort = 0;
+
+        if (!m_redirect || !m_redirect->lookupOriginal(clientIp, clientPort, origDstIp, origDstPort)) {
+            // Unknown connection — pass through
+            logMsg(QString("Transparent: no redirect info for %1:%2")
+                   .arg(clientIp).arg(clientPort));
+            client->disconnectFromHost();
+            client->deleteLater();
+            continue;
+        }
+
+        // Resolve IP to hostname via reverse DNS
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(origDstIp);
+        char hostBuf[NI_MAXHOST];
+        QString host;
+        if (getnameinfo((struct sockaddr *)&addr, sizeof(addr),
+                        hostBuf, sizeof(hostBuf), nullptr, 0, 0) == 0) {
+            host = QString::fromLatin1(hostBuf);
+        }
+
+        // If reverse DNS returns IP or fails, use IP
+        if (host.isEmpty() || host == QString::number(origDstIp)) {
+            struct in_addr a;
+            a.s_addr = htonl(origDstIp);
+            host = QString::fromLatin1(inet_ntoa(a));
+        }
+
+        logMsg(QString("Transparent: intercepted %1:%2 → %3:%4 (host=%5)")
+               .arg(clientIp).arg(clientPort)
+               .arg(host).arg(origDstPort)
+               .arg(host));
+
+        // Emit request metadata for traffic list
+        RequestItem item;
+        item.id = m_nextId++;
+        item.timestamp = QDateTime::currentDateTime();
+        item.host = host;
+        item.method = "CONNECT";
+        item.path = host + ":" + QString::number(origDstPort);
+        item.protocol = "HTTPS";
+        item.url = "https://" + host;
+        item.duration = 0;
+        emit requestCaptured(item);
+
+        // Perform MITM if enabled
+        if (m_mitmEnabled && m_mitmEngine) {
+            handleTransparentMitm(client, host, origDstPort);
+        } else {
+            // No MITM — just tunnel (pass-through)
+            auto *connector = new ConnectThread(-1, host, origDstPort);
+            // For pass-through, we'd need the initial data. Simplified: just close.
+            client->disconnectFromHost();
+            client->deleteLater();
+            connector->deleteLater();
+        }
+    }
+}
+
+void ProxyServer::handleTransparentMitm(QTcpSocket *client, const QString &host, quint16 port)
+{
+    logMsg("Transparent MITM: intercepting " + host + ":" + QString::number(port));
+
+    // Remove from connection map (MitmConnection manages the socket)
+    m_connections.remove(client);
+
+    MitmConnection *mitmConn = m_mitmEngine->intercept(client, host, port);
+    connect(mitmConn, &MitmConnection::finished, this, [mitmConn, client]() {
+        client->disconnectFromHost();
+        client->deleteLater();
+        mitmConn->deleteLater();
+    });
 }

@@ -11,6 +11,7 @@
 class CertManager;
 class MitmEngine;
 class MitmConnection;
+class WfpRedirect;
 
 class ProxyServer : public QObject
 {
@@ -28,6 +29,9 @@ public:
     void enableMitm(CertManager *certMgr);
     void disableMitm();
     bool isMitmEnabled() const;
+
+    // Transparent proxy (WinDivert redirect)
+    bool startTransparent(quint16 port, WfpRedirect *redirect);
 
 signals:
     void requestCaptured(const RequestItem &item);
@@ -60,6 +64,10 @@ private:
                         const QString &host, quint16 port, qint64 durationMs);
     void cleanup(Connection *conn);
 
+    // Transparent proxy
+    void onTransparentConnection();
+    void handleTransparentMitm(QTcpSocket *client, const QString &host, quint16 port);
+
     QTcpServer *m_server;
     QNetworkAccessManager *m_nam;
     QMap<QTcpSocket*, Connection*> m_connections;
@@ -69,4 +77,8 @@ private:
     CertManager *m_certMgr = nullptr;
     MitmEngine *m_mitmEngine = nullptr;
     bool m_mitmEnabled = false;
+
+    // Transparent proxy
+    QTcpServer *m_transparentServer = nullptr;
+    WfpRedirect *m_redirect = nullptr;
 };
