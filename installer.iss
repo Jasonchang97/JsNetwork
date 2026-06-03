@@ -46,7 +46,11 @@ begin
   Exec('sc', 'stop WinDivert', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('sc', 'delete WinDivert', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 
-  // Give the driver a moment to unload
+  // Stop WFP callout driver service
+  Exec('sc', 'stop JsNetworkWfp', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('sc', 'delete JsNetworkWfp', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+
+  // Give the drivers a moment to unload
   Sleep(1000);
 
   Result := '';

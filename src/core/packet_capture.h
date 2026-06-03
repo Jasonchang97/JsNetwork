@@ -13,6 +13,7 @@
 #include <winsock2.h>
 // WinDivert-based capture (replaces pcap on Windows)
 class WfpCapture;
+class WfpDriverManager;
 #else
 #include <pcap/pcap.h>
 #endif
@@ -112,6 +113,11 @@ public:
     bool isRunning() const;
     void setMitmActive(bool active);
 
+#ifdef Q_OS_WIN
+    void startWfpDriver();
+    void stopWfpDriver();
+#endif
+
     static QStringList availableInterfaces();
 
 signals:
@@ -121,6 +127,7 @@ signals:
 private:
 #ifdef Q_OS_WIN
     WfpCapture *m_wfpCapture = nullptr;
+    WfpDriverManager *m_wfpDriver = nullptr;
 #else
     bool startCaptureOnInterface(pcap_if_t *dev);
     static bool isNpcapInstalled();

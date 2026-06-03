@@ -11,6 +11,9 @@
 // Windows: delegate to WfpCapture (WinDivert-based)
 // ============================================================================
 #include "wfp_capture.h"
+#include "wfp_driver_manager.h"
+#include <ws2tcpip.h>
+#include <winsock2.h>
 
 PacketCapture::PacketCapture(QObject *parent)
     : QObject(parent)
@@ -62,6 +65,69 @@ bool PacketCapture::isRunning() const
 void PacketCapture::setMitmActive(bool active)
 {
     if (m_wfpCapture) m_wfpCapture->setMitmActive(active);
+}
+
+void PacketCapture::startWfpDriver()
+{
+    if (m_wfpDriver) return;
+
+    m_wfpDriver = new WfpDriverManager(this);
+    connect(m_wfpDriver, &WfpDriverManager::connectionDetected,
+            this, [this](quint32 pid, const QString &processPath,
+                        quint32 localAddr, quint16 localPort,
+                        quint32 remoteAddr, quint16 remotePort) {
+        // Resolve remote IP to hostname
+        struct sockaddr_in addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = remoteAddr;  // already network byte order
+        char hostBuf[NI_MAXHOST];
+        QString host;
+        if (getnameinfo((struct sockaddr *)&addr, sizeof(addr),
+                        hostBuf, sizeof(hostBuf), nullptr, 0, 0) == 0) {
+            host = QString::fromLatin1(hostBuf);
+        }
+        if (host.isEmpty()) {
+            host = QString::fromLatin1(inet_ntoa(addr.sin_addr));
+        }
+
+        // Build request item for traffic list
+        RequestItem item;
+        item.host = host;
+        item.method = "CONNECT";
+        item.path = host + ":" + QString::number(remotePort);
+        item.protocol = (remotePort == 443) ? "HTTPS" : "TCP";
+        item.url = "https://" + host;
+        item.source = processPath;  // Which process initiated the connection
+        emit requestCaptured(item);
+    });
+
+    connect(m_wfpDriver, &WfpDriverManager::driverError,
+            this, [this](const QString &error) {
+        emit captureStatusChanged("WFP driver error: " + error);
+    });
+
+    connect(m_wfpDriver, &WfpDriverManager::driverStatusChanged,
+            this, &PacketCapture::captureStatusChanged);
+
+    if (m_wfpDriver->isAvailable()) {
+        if (m_wfpDriver->install() && m_wfpDriver->start()) {
+            qDebug() << "PacketCapture: WFP driver started";
+        } else {
+            qWarning() << "PacketCapture: WFP driver failed to start";
+        }
+    } else {
+        qDebug() << "PacketCapture: WFP driver not available (jsnetwork_wfp.sys not found)";
+    }
+}
+
+void PacketCapture::stopWfpDriver()
+{
+    if (m_wfpDriver) {
+        m_wfpDriver->stop();
+        delete m_wfpDriver;
+        m_wfpDriver = nullptr;
+    }
 }
 
 QStringList PacketCapture::availableInterfaces()

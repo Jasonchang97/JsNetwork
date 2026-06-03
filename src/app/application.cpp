@@ -131,6 +131,9 @@ Application::~Application()
     logMsg("Packet capture stopped");
 
 #ifdef Q_OS_WIN
+    m_packetCapture->stopWfpDriver();
+    logMsg("WFP driver stopped");
+
     if (m_wfpRedirect) {
         m_wfpRedirect->stop();
         logMsg("Transparent proxy redirect stopped");
@@ -264,6 +267,9 @@ void Application::start()
             logMsg("Transparent proxy failed to start");
         }
     }
+
+    // Start WFP callout driver for process-level connection tracking
+    m_packetCapture->startWfpDriver();
 #endif
 
     // Save m_mainWindow pointer to a volatile stack local BEFORE any calls

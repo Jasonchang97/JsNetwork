@@ -1,0 +1,71 @@
+; jsnetwork_wfp.inf
+;
+; WFP Callout Driver for JsNetwork network traffic capture.
+; This driver registers WFP callouts at the ALE Connect layer
+; to capture outbound TCP connections with process information.
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = NetService
+ClassGuid   = {4D36E974-E325-11CE-BFC1-08002BE10318}
+Provider    = %ManufacturerName%
+DriverVer   = 01/01/2026,1.0.2.0
+CatalogFile = jsnetwork_wfp.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12  ; %windir%\system32\drivers
+
+; =================== Class installation ===================
+[ClassInstall32]
+Addreg = NetServiceClassReg
+
+[NetServiceClassReg]
+HKR,,,0,%ServiceDesc%
+HKR,,Icon,,0
+
+; =================== Standard installation ===================
+[DefaultInstall]
+CopyFiles = CopyFiles_Driver
+AddReg    = AddReg_Driver
+
+[DefaultInstall.Services]
+AddService = JsNetworkWfp,,ServiceInstall
+
+[DefaultUninstall]
+DelService = JsNetworkWfp,0x200
+
+[DefaultUninstall.Services]
+DelService = JsNetworkWfp,0x200
+
+; =================== Copy files ===================
+[CopyFiles_Driver]
+jsnetwork_wfp.sys
+
+; =================== Add Registry ===================
+[AddReg_Driver]
+HKR,Parameters,DebugLevel,0x00010001,0
+
+; =================== Service installation ===================
+[ServiceInstall]
+DisplayName   = %ServiceName%
+Description   = %ServiceDesc%
+ServiceType   = 1          ; SERVICE_KERNEL_DRIVER
+StartType     = 3          ; SERVICE_DEMAND_START (manual start)
+ErrorControl  = 1          ; SERVICE_ERROR_NORMAL
+ServiceBinary = %12%\jsnetwork_wfp.sys
+
+; =================== Source disks ===================
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+jsnetwork_wfp.sys = 1,,
+
+; =================== Strings ===================
+[Strings]
+ManufacturerName = "JsNetwork"
+ServiceName      = "JsNetwork WFP Driver"
+ServiceDesc      = "JsNetwork Windows Filtering Platform Callout Driver for network traffic capture"
+DiskName         = "JsNetwork WFP Driver Installation Disk"

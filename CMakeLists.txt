@@ -60,7 +60,7 @@ set(SOURCES
 )
 
 if(WIN32)
-    list(APPEND SOURCES src/core/wfp_capture.cpp src/core/wfp_redirect.cpp)
+    list(APPEND SOURCES src/core/wfp_capture.cpp src/core/wfp_redirect.cpp src/core/wfp_driver_manager.cpp)
 endif()
 
 set(HEADERS
@@ -91,7 +91,7 @@ set(HEADERS
 )
 
 if(WIN32)
-    list(APPEND HEADERS src/core/wfp_capture.h src/core/wfp_redirect.h)
+    list(APPEND HEADERS src/core/wfp_capture.h src/core/wfp_redirect.h src/core/wfp_driver_manager.h)
 endif()
 
 # App icon (macOS)
@@ -191,6 +191,8 @@ if(WIN32)
         user32
         ${ZLIB_LIB}
         wininet
+        fltLib
+        advapi32
     )
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE
