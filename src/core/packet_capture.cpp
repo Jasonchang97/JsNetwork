@@ -59,6 +59,11 @@ bool PacketCapture::isRunning() const
     return m_wfpCapture && m_wfpCapture->isRunning();
 }
 
+void PacketCapture::setMitmActive(bool active)
+{
+    if (m_wfpCapture) m_wfpCapture->setMitmActive(active);
+}
+
 QStringList PacketCapture::availableInterfaces()
 {
     // WinDivert captures all interfaces at WFP level — no enumeration needed
@@ -920,6 +925,12 @@ bool PacketCapture::isRunning() const
         }
     }
     return false;
+}
+
+void PacketCapture::setMitmActive(bool active)
+{
+    // macOS: pcap doesn't need MITM state (no duplicate filtering)
+    Q_UNUSED(active);
 }
 
 #endif // Q_OS_WIN / macOS pcap implementation

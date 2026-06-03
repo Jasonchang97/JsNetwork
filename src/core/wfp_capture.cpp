@@ -118,8 +118,28 @@ QString WfpCaptureThread::reverseDnsLookup(const QString &ip)
     return QString();
 }
 
-void WfpCaptureThread::emitStream(const WfpTcpStream &stream)
+void WfpCaptureThread::emitStream(const WfpTcpStream &stream, bool force)
 {
+    // Filter out noise during normal operation (not on shutdown)
+    if (!force) {
+        // When MITM is active, the proxy handles HTTPS with full content.
+        // Skip bare CONNECT metadata from WinDivert to avoid duplicates.
+        if (stream.isHttps && m_mitmActive) {
+            return;
+        }
+
+        // For HTTP, only emit if we have actual HTTP content (request or response data)
+        if (!stream.isHttps) {
+            bool hasHttpRequest = !stream.requestData.isEmpty()
+                                  && isValidHttpRequest(stream.requestData);
+            bool hasHttpResponse = !stream.responseData.isEmpty()
+                                   && stream.responseData.indexOf("\r\n\r\n") >= 0;
+            if (!hasHttpRequest && !hasHttpResponse) {
+                return; // No parseable HTTP content — skip
+            }
+        }
+    }
+
     RequestItem item;
     item.id = m_nextId++;
     item.timestamp = QDateTime::fromMSecsSinceEpoch(stream.startTime);
@@ -290,7 +310,7 @@ void WfpCaptureThread::run()
 
     QMutexLocker lock(&m_mutex);
     for (auto it = m_streams.begin(); it != m_streams.end(); ++it) {
-        emitStream(it.value());
+        emitStream(it.value(), true);
     }
     m_streams.clear();
 
@@ -626,6 +646,11 @@ bool WfpCapture::isAvailable() const
 {
     QString appDir = QCoreApplication::applicationDirPath();
     return QFile::exists(appDir + "/WinDivert.dll");
+}
+
+void WfpCapture::setMitmActive(bool active)
+{
+    if (m_thread) m_thread->setMitmActive(active);
 }
 
 #endif // Q_OS_WIN

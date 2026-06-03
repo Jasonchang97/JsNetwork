@@ -228,6 +228,7 @@ void Application::start()
         });
 #endif
         m_proxyServer->enableMitm(m_certManager.get());
+        m_packetCapture->setMitmActive(true);
         logMsg("MITM auto-enabled (HTTPS decrypt active)");
     } else {
         logMsg("Certificate NOT ready - HTTPS decrypt unavailable");

@@ -87,6 +87,7 @@ public:
     WfpCaptureThread(void *handle, const WinDivertApi *api, QObject *parent = nullptr);
     void run() override;
     void requestStop();
+    void setMitmActive(bool active) { m_mitmActive = active; }
 
 signals:
     void httpCaptured(const RequestItem &item);
@@ -96,7 +97,7 @@ private:
                           const quint8 *payload, unsigned int payloadLen, bool outbound, bool isIpv6);
     void checkStreamComplete(const WfpConnKey &key, WfpTcpStream &stream);
     void emitStaleStreams();
-    void emitStream(const WfpTcpStream &stream);
+    void emitStream(const WfpTcpStream &stream, bool force = false);
     static QString extractSniFromClientHello(const QByteArray &data);
     QString reverseDnsLookup(const QString &ip);
 
@@ -109,6 +110,7 @@ private:
     QMutex m_mutex;
     int m_nextId = 1;
     int m_packetCount = 0;
+    bool m_mitmActive = false;
 };
 
 class WfpCapture : public QObject
@@ -122,6 +124,7 @@ public:
     void stop();
     bool isRunning() const;
     bool isAvailable() const;
+    void setMitmActive(bool active);
 
 signals:
     void requestCaptured(const RequestItem &item);

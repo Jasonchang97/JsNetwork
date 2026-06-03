@@ -110,6 +110,7 @@ public:
     bool start();
     void stop();
     bool isRunning() const;
+    void setMitmActive(bool active);
 
     static QStringList availableInterfaces();
 
