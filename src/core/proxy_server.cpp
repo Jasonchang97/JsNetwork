@@ -851,13 +851,14 @@ void ProxyServer::onTransparentConnection()
             item.host = host;
             item.method = "CONNECT";
             item.path = host + ":" + QString::number(origDstPort);
-            item.protocol = "HTTPS";
-            item.url = "https://" + host;
+            item.protocol = isTls ? "HTTPS" : "HTTP";
+            item.url = (isTls ? "https://" : "http://") + host;
             item.duration = 0;
             emit requestCaptured(item);
 
-            // Perform MITM if enabled, otherwise tunnel through
-            if (m_mitmEnabled && m_mitmEngine) {
+            // MITM only works for TLS connections (need ClientHello for cert generation).
+            // Non-TLS (HTTP) always tunnels through.
+            if (isTls && m_mitmEnabled && m_mitmEngine) {
                 logMsg("Transparent MITM: intercepting " + host + ":" + QString::number(origDstPort));
                 handleTransparentMitm(client, host, origDstPort);
             } else {
