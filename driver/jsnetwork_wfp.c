@@ -52,7 +52,7 @@ DEFINE_GUID(JSNWFP_ALE_CONNECT_CALLOUT_GUID,
 
 DRIVER_INITIALIZE DriverEntry;
 static VOID     DriverUnload(_In_ PDRIVER_OBJECT DriverObject);
-static NTSTATUS FilterUnload(_In_ FLT_UNLOAD_FLAGS Flags);
+static NTSTATUS FilterUnload(_In_ ULONG Flags);
 
 static NTSTATUS RegisterWfpCallouts(_In_ PDEVICE_OBJECT deviceObject);
 static VOID     UnregisterWfpCallouts(VOID);
@@ -115,7 +115,6 @@ NTSTATUS DriverEntry(
     NTSTATUS status;
     FLT_REGISTRATION filterReg = {0};
     UNICODE_STRING deviceName;
-    UNICODE_STRING deviceLink;
 
     UNREFERENCED_PARAMETER(registryPath);
 
@@ -197,7 +196,7 @@ static VOID DriverUnload(_In_ PDRIVER_OBJECT driverObject)
     }
 }
 
-static NTSTATUS FilterUnload(_In_ FLT_UNLOAD_FLAGS flags)
+static NTSTATUS FilterUnload(_In_ ULONG flags)
 {
     UNREFERENCED_PARAMETER(flags);
     DbgPrint("JsNetworkWfp: FilterUnload\n");
@@ -236,15 +235,11 @@ static NTSTATUS SetupCommunicationPort(VOID)
                                OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                                NULL, sd);
 
-    FLT_PORT_CONNECT connect = {0};
-    connect.SizeOfPortConnect = sizeof(FLT_PORT_CONNECT);
-    connect.Connect = PortConnect;
-    connect.Disconnect = PortDisconnect;
-
+    // Kernel-mode FltCreateCommunicationPort takes callbacks directly
     status = FltCreateCommunicationPort(g_Filter, &g_ServerPort,
-                                         &objAttr, NULL, &connect, NULL,
-                                         1,  // MaxConnections
-                                         1); // NumberOfThreads
+                                         &objAttr, NULL,
+                                         PortConnect, PortDisconnect, NULL,
+                                         1); // MaxConnections
 
     FltFreeSecurityDescriptor(sd);
 
@@ -424,12 +419,7 @@ static VOID NTAPI AleConnectClassify(
 {
     JSNWFP_EVENT event;
     NTSTATUS status;
-    ULONG bytesReturned;
-    HANDLE processHandle = NULL;
-    PVOID processObject = NULL;
-    ULONG returnLength;
     UINT64 processId;
-    UNICODE_STRING processImagePath;
     WCHAR imagePath[JSNWFP_MAX_PATH];
 
     UNREFERENCED_PARAMETER(layerData);
@@ -454,14 +444,18 @@ static VOID NTAPI AleConnectClassify(
 
     // Get process image path
     memset(imagePath, 0, sizeof(imagePath));
-    processImagePath.Buffer = imagePath;
-    processImagePath.Length = 0;
-    processImagePath.MaximumLength = sizeof(imagePath);
-
-    status = PsLookupProcessByProcessId((HANDLE)processId, &processObject);
-    if (NT_SUCCESS(status) && processObject) {
-        status = SeLocateProcessImageName(processObject, &processImagePath);
-        ObDereferenceObject(processObject);
+    {
+        PEPROCESS process = NULL;
+        status = PsLookupProcessByProcessId((HANDLE)processId, &process);
+        if (NT_SUCCESS(status) && process) {
+            PUNICODE_STRING pImageName = NULL;
+            status = SeLocateProcessImageName(process, &pImageName);
+            if (NT_SUCCESS(status) && pImageName) {
+                RtlStringCbCopyW(imagePath, sizeof(imagePath), pImageName->Buffer);
+                ExFreePool(pImageName);
+            }
+            ObDereferenceObject(process);
+        }
     }
 
     if (!NT_SUCCESS(status)) {
