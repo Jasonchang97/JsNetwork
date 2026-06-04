@@ -71,6 +71,7 @@ private:
     // Transparent proxy
     void onTransparentConnection();
     void handleTransparentMitm(QTcpSocket *client, const QString &host, quint16 port);
+    void handleTransparentTunnel(QTcpSocket *client, const QString &host, quint16 port);
 
     QTcpServer *m_server;
     QNetworkAccessManager *m_nam;

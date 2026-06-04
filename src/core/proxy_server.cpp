@@ -845,16 +845,12 @@ void ProxyServer::onTransparentConnection()
         item.duration = 0;
         emit requestCaptured(item);
 
-        // Perform MITM if enabled
+        // Perform MITM if enabled, otherwise tunnel through
         if (m_mitmEnabled && m_mitmEngine) {
             handleTransparentMitm(client, host, origDstPort);
         } else {
-            // No MITM — just tunnel (pass-through)
-            auto *connector = new ConnectThread(-1, host, origDstPort);
-            // For pass-through, we'd need the initial data. Simplified: just close.
-            client->disconnectFromHost();
-            client->deleteLater();
-            connector->deleteLater();
+            // No MITM — create a raw TCP tunnel so the connection still works
+            handleTransparentTunnel(client, host, origDstPort);
         }
     }
 }
@@ -872,5 +868,54 @@ void ProxyServer::handleTransparentMitm(QTcpSocket *client, const QString &host,
         client->deleteLater();
         mitmConn->deleteLater();
     });
+}
+
+void ProxyServer::handleTransparentTunnel(QTcpSocket *client, const QString &host, quint16 port)
+{
+    logMsg("Transparent tunnel: " + host + ":" + QString::number(port));
+
+    // Connect to the real server in a background thread
+    auto *connector = new ConnectThread(-1, host, port, this);
+    connect(connector, &QThread::finished, this, [this, client, connector, host, port]() {
+        if (!connector->success()) {
+            logMsg("Transparent tunnel: connect failed for " + host + ":" + QString::number(port));
+            client->disconnectFromHost();
+            client->deleteLater();
+            connector->deleteLater();
+            return;
+        }
+
+        // Get the server fd from the connector
+        int serverFd = connector->takeServerFd();
+        if (serverFd < 0) {
+            client->disconnectFromHost();
+            client->deleteLater();
+            connector->deleteLater();
+            return;
+        }
+
+        // Create a QTcpSocket from the server fd
+        auto *server = new QTcpSocket(this);
+        server->setSocketDescriptor(serverFd);
+
+        // Set up bidirectional forwarding
+        connect(client, &QTcpSocket::readyRead, server, [client, server]() {
+            server->write(client->readAll());
+        });
+        connect(server, &QTcpSocket::readyRead, client, [client, server]() {
+            client->write(server->readAll());
+        });
+        connect(client, &QTcpSocket::disconnected, server, &QTcpSocket::disconnectFromHost);
+        connect(server, &QTcpSocket::disconnected, client, &QTcpSocket::disconnectFromHost);
+
+        // Cleanup when done
+        connect(client, &QTcpSocket::disconnected, this, [client, server]() {
+            server->deleteLater();
+            client->deleteLater();
+        });
+
+        connector->deleteLater();
+    });
+    connector->start();
 }
 #endif // Q_OS_WIN
