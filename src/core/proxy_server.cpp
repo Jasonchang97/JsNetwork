@@ -801,7 +801,6 @@ void ProxyServer::onTransparentConnection()
         quint16 origDstPort = 0;
 
         if (!m_redirect || !m_redirect->lookupOriginal(clientIp, clientPort, origDstIp, origDstPort)) {
-            // Unknown connection — pass through
             logMsg(QString("Transparent: no redirect info for %1:%2")
                    .arg(clientIp).arg(clientPort));
             client->disconnectFromHost();
@@ -809,49 +808,62 @@ void ProxyServer::onTransparentConnection()
             continue;
         }
 
-        // Resolve IP to hostname via reverse DNS
-        struct sockaddr_in addr;
-        memset(&addr, 0, sizeof(addr));
-        addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(origDstIp);
-        char hostBuf[NI_MAXHOST];
-        QString host;
-        if (getnameinfo((struct sockaddr *)&addr, sizeof(addr),
-                        hostBuf, sizeof(hostBuf), nullptr, 0, 0) == 0) {
-            host = QString::fromLatin1(hostBuf);
-        }
+        // Convert original destination IP to string (fallback hostname)
+        struct in_addr a;
+        a.s_addr = htonl(origDstIp);
+        QString origDstIpStr = QString::fromLatin1(inet_ntoa(a));
 
-        // If reverse DNS returns IP or fails, use IP
-        if (host.isEmpty() || host == QString::number(origDstIp)) {
-            struct in_addr a;
-            a.s_addr = htonl(origDstIp);
-            host = QString::fromLatin1(inet_ntoa(a));
-        }
-
-        logMsg(QString("Transparent: intercepted %1:%2 → %3:%4 (host=%5)")
+        logMsg(QString("Transparent: new connection %1:%2 → %3:%4")
                .arg(clientIp).arg(clientPort)
-               .arg(host).arg(origDstPort)
-               .arg(host));
+               .arg(origDstIpStr).arg(origDstPort));
 
-        // Emit request metadata for traffic list
-        RequestItem item;
-        item.id = m_nextId++;
-        item.timestamp = QDateTime::currentDateTime();
-        item.host = host;
-        item.method = "CONNECT";
-        item.path = host + ":" + QString::number(origDstPort);
-        item.protocol = "HTTPS";
-        item.url = "https://" + host;
-        item.duration = 0;
-        emit requestCaptured(item);
+        // Wait for the first data from the client to extract SNI from TLS ClientHello.
+        // Reverse DNS on the IP rarely returns the actual hostname, so we must parse
+        // the ClientHello to get the real server name for MITM certificate generation.
+        connect(client, &QTcpSocket::readyRead, this, [this, client, origDstIpStr, origDstPort]() {
+            // Peek at the data without consuming (MitmConnection needs it)
+            QByteArray peekData = client->peek(512);
 
-        // Perform MITM if enabled, otherwise tunnel through
-        if (m_mitmEnabled && m_mitmEngine) {
-            handleTransparentMitm(client, host, origDstPort);
-        } else {
-            // No MITM — create a raw TCP tunnel so the connection still works
-            handleTransparentTunnel(client, host, origDstPort);
-        }
+            QString host;
+            bool isTls = false;
+
+            // Check for TLS ClientHello: ContentType=0x16, Version=0x03xx
+            if (peekData.size() >= 2
+                && (unsigned char)peekData[0] == 0x16
+                && (unsigned char)peekData[1] == 0x03) {
+                isTls = true;
+                host = extractSniFromClientHello(peekData);
+                if (!host.isEmpty()) {
+                    logMsg("Transparent TLS: SNI=" + host);
+                }
+            }
+
+            // Fallback to IP if SNI extraction failed
+            if (host.isEmpty()) {
+                host = origDstIpStr;
+                logMsg("Transparent: no SNI, using IP " + host);
+            }
+
+            // Emit request metadata for traffic list
+            RequestItem item;
+            item.id = m_nextId++;
+            item.timestamp = QDateTime::currentDateTime();
+            item.host = host;
+            item.method = "CONNECT";
+            item.path = host + ":" + QString::number(origDstPort);
+            item.protocol = "HTTPS";
+            item.url = "https://" + host;
+            item.duration = 0;
+            emit requestCaptured(item);
+
+            // Perform MITM if enabled, otherwise tunnel through
+            if (m_mitmEnabled && m_mitmEngine) {
+                logMsg("Transparent MITM: intercepting " + host + ":" + QString::number(origDstPort));
+                handleTransparentMitm(client, host, origDstPort);
+            } else {
+                handleTransparentTunnel(client, host, origDstPort);
+            }
+        });
     }
 }
 

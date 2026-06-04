@@ -253,13 +253,13 @@ bool WfpRedirect::start(quint16 proxyPort)
 
     if (!loadWinDivert()) return false;
 
-    // Filter: TCP to port 443, not loopback, not proxy's own port
-    QString filter = QString("tcp and !loopback and !tcp.SrcPort == %1 and !tcp.DstPort == %1")
-                     .arg(proxyPort);
+    // Filter: only TCP traffic to/from port 443 (HTTPS).
+    // Non-SNIFF mode holds packets so we can rewrite the SYN destination.
+    // Narrowing to port 443 only — the old filter captured ALL TCP, which
+    // blocked every TCP packet on the system and caused browser hangs.
+    QString filter = QString("tcp and tcp.DstPort == 443 and !loopback");
     QByteArray filterUtf8 = filter.toLatin1();
 
-    // Open WITHOUT SNIFF — packets are blocked until we re-inject them.
-    // This lets us modify and re-inject, or re-inject unchanged.
     m_wdHandle = m_api.open(filterUtf8.constData(), 0, 0, 0);
     if (!m_wdHandle || m_wdHandle == INVALID_HANDLE_VALUE) {
         DWORD err = GetLastError();
