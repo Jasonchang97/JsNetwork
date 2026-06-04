@@ -18,8 +18,8 @@
 // WfpDriverListenThread
 // ============================================================================
 
-WfpDriverListenThread::WfpDriverListenThread(HANDLE port, QObject *parent)
-    : QThread(parent), m_port(port), m_stopRequested(0)
+WfpDriverListenThread::WfpDriverListenThread(HANDLE port, FilterGetMessageFn getMessageFn, QObject *parent)
+    : QThread(parent), m_port(port), m_getMessageFn(getMessageFn), m_stopRequested(0)
 {
 }
 
@@ -30,24 +30,25 @@ void WfpDriverListenThread::requestStop()
 
 void WfpDriverListenThread::run()
 {
-    JSNWFP_EVENT event;
-    DWORD bytesReturned;
+    // Buffer must start with FILTER_MESSAGE_HEADER followed by our event data
+    struct {
+        JSNWFP_MSG_HEADER header;
+        JSNWFP_EVENT event;
+    } msgBuf;
     HRESULT hr;
 
     qDebug() << "WfpDriverListenThread: started";
 
     while (!m_stopRequested) {
-        memset(&event, 0, sizeof(event));
-        bytesReturned = 0;
+        memset(&msgBuf, 0, sizeof(msgBuf));
 
         // FilterGetMessage blocks until a message arrives or the port is closed
-        hr = FilterGetMessage(m_port,
-                              &event, sizeof(event),
-                              &bytesReturned, NULL);
+        hr = m_getMessageFn(m_port, &msgBuf, sizeof(msgBuf), NULL);
 
         if (m_stopRequested) break;
 
         if (SUCCEEDED(hr)) {
+            JSNWFP_EVENT &event = msgBuf.event;
             QString processPath = QString::fromWCharArray(event.processPath);
 
             emit connectionDetected(
@@ -263,7 +264,7 @@ bool WfpDriverManager::start()
     }
 
     // Start listening thread
-    m_listenThread = new WfpDriverListenThread(m_port, this);
+    m_listenThread = new WfpDriverListenThread(m_port, m_getMessageFn, this);
     connect(m_listenThread, &WfpDriverListenThread::connectionDetected,
             this, &WfpDriverManager::connectionDetected);
     connect(m_listenThread, &QThread::finished,

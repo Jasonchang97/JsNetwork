@@ -26,6 +26,9 @@ struct RequestItem {
 
     QDateTime timestamp;
 
+    // Process info (WFP driver)
+    QString source;
+
     // Timing
     qint64 dnsTime = 0;
     qint64 connectTime = 0;

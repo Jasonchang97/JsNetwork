@@ -22,6 +22,12 @@ typedef unsigned long DWORD;
 #define JSNWFP_EVENT_CONNECT        1
 #define JSNWFP_EVENT_DISCONNECT     2
 
+// FILTER_MESSAGE_HEADER from fltUser.h
+typedef struct _JSNWFP_MSG_HEADER {
+    unsigned long  ReplyLength;
+    unsigned long long MessageId;
+} JSNWFP_MSG_HEADER;
+
 #pragma pack(push, 8)
 typedef struct _JSNWFP_EVENT {
     unsigned int   eventType;
@@ -48,7 +54,9 @@ typedef struct _JSNWFP_COMMAND {
 class WfpDriverListenThread : public QThread {
     Q_OBJECT
 public:
-    explicit WfpDriverListenThread(HANDLE port, QObject *parent = nullptr);
+    typedef long (*FilterGetMessageFn)(void *, void *, unsigned long, void *);
+
+    explicit WfpDriverListenThread(HANDLE port, FilterGetMessageFn getMessageFn, QObject *parent = nullptr);
     void requestStop();
 
 signals:
@@ -61,6 +69,7 @@ protected:
 
 private:
     HANDLE m_port;
+    FilterGetMessageFn m_getMessageFn;
     QAtomicInt m_stopRequested;
 };
 
@@ -101,7 +110,7 @@ private:
     typedef long (*FilterGetMessageFn)(
         void *port, void *messageBuffer,
         unsigned long messageBufferSize,
-        unsigned long *bytesReturned, void *overlapped);
+        void *overlapped);
     typedef long (*FilterSendMessageFn)(
         void *port, void *inBuffer,
         unsigned long inBufferSize, void *outBuffer,
