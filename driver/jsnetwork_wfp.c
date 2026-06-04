@@ -481,18 +481,19 @@ static VOID NTAPI AleConnectClassify(
     // Copy process path (safe copy with null termination)
     RtlStringCbCopyW(event.processPath, sizeof(event.processPath), imagePath);
 
-    // Send to user-mode (non-blocking, drop if no client)
+    // Send to user-mode with zero timeout (non-blocking, drop if busy)
     __try {
+        LARGE_INTEGER timeout;
+        timeout.QuadPart = 0;  // Non-blocking: return immediately if no client or busy
         status = FltSendMessage(g_Filter, &g_ClientPort,
                                 &event, sizeof(event),
-                                NULL, NULL, NULL);
+                                NULL, &timeout, NULL);
         if (!NT_SUCCESS(status)) {
-            // Client may have disconnected, not critical
-            DbgPrint("JsNetworkWfp: FltSendMessage failed: 0x%08X\n", status);
+            // Client may have disconnected or buffer full — not critical
         }
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
-        DbgPrint("JsNetworkWfp: Exception in FltSendMessage\n");
+        // Swallow exceptions from message sending
     }
 }
 

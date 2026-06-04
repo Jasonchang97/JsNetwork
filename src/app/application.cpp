@@ -268,8 +268,9 @@ void Application::start()
         }
     }
 
-    // Start WFP callout driver for process-level connection tracking
-    m_packetCapture->startWfpDriver();
+    // WFP callout driver disabled — FltSendMessage blocks outbound connections
+    // causing browser hangs. Needs non-blocking approach before re-enabling.
+    // m_packetCapture->startWfpDriver();
 #endif
 
     // Save m_mainWindow pointer to a volatile stack local BEFORE any calls
