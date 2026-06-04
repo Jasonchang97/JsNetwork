@@ -19,6 +19,7 @@ typedef unsigned long DWORD;
 #define JSNWFP_CMD_START_CAPTURE    1
 #define JSNWFP_CMD_STOP_CAPTURE     2
 #define JSNWFP_CMD_SET_FILTER       3
+#define JSNWFP_CMD_QUERY_ORIG_DST   4
 #define JSNWFP_EVENT_CONNECT        1
 #define JSNWFP_EVENT_DISCONNECT     2
 
@@ -48,6 +49,18 @@ typedef struct _JSNWFP_COMMAND {
     unsigned int   param;
     wchar_t        filterPath[JSNWFP_MAX_PATH];
 } JSNWFP_COMMAND;
+
+typedef struct _JSNWFP_QUERY {
+    unsigned int   clientAddr;     // Client IP (network byte order)
+    unsigned short clientPort;     // Client port (host byte order)
+    unsigned short padding;
+} JSNWFP_QUERY;
+
+typedef struct _JSNWFP_ORIG_DST {
+    unsigned int   origAddr;       // Original destination IP (network byte order)
+    unsigned short origPort;       // Original destination port (host byte order)
+    unsigned short found;          // 1=found, 0=not found
+} JSNWFP_ORIG_DST;
 #pragma pack(pop)
 
 // Background thread that listens for events from the kernel driver
@@ -90,6 +103,10 @@ public:
 
     // Send command to driver
     bool sendCommand(quint32 command, quint32 param = 0);
+
+    // Query original destination for a redirected connection
+    bool queryOriginalDestination(quint32 clientAddr, quint16 clientPort,
+                                  quint32 &origAddr, quint16 &origPort);
 
 signals:
     void connectionDetected(quint32 pid, const QString &processPath,

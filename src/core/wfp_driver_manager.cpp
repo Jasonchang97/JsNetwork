@@ -331,4 +331,40 @@ bool WfpDriverManager::sendCommand(quint32 command, quint32 param)
     return SUCCEEDED(hr);
 }
 
+bool WfpDriverManager::queryOriginalDestination(quint32 clientAddr, quint16 clientPort,
+                                                 quint32 &origAddr, quint16 &origPort)
+{
+    if (!m_port || !m_sendMessageFn) return false;
+
+    // Build command with query embedded in the filterPath area
+    JSNWFP_COMMAND cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.command = JSNWFP_CMD_QUERY_ORIG_DST;
+
+    JSNWFP_QUERY *query = reinterpret_cast<JSNWFP_QUERY *>(&cmd.filterPath);
+    query->clientAddr = clientAddr;
+    query->clientPort = clientPort;
+    query->padding = 0;
+
+    JSNWFP_ORIG_DST response;
+    memset(&response, 0, sizeof(response));
+    DWORD bytesReturned = 0;
+
+    HRESULT hr = m_sendMessageFn(m_port, &cmd, sizeof(cmd),
+                                 &response, sizeof(response), &bytesReturned);
+    if (FAILED(hr)) {
+        qDebug() << "WfpDriverManager: queryOriginalDestination failed, hr="
+                 << QString::number(hr, 16);
+        return false;
+    }
+
+    if (!response.found) {
+        return false;
+    }
+
+    origAddr = response.origAddr;
+    origPort = response.origPort;
+    return true;
+}
+
 #endif // Q_OS_WIN

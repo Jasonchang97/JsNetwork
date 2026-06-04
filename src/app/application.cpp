@@ -9,7 +9,7 @@
 #include "core/har_exporter.h"
 #include "core/packet_capture.h"
 #ifdef Q_OS_WIN
-#include "core/wfp_redirect.h"
+#include "core/wfp_driver_manager.h"
 #endif
 #include "platform/cert_installer.h"
 #include "platform/proxy_config.h"
@@ -133,11 +133,6 @@ Application::~Application()
 #ifdef Q_OS_WIN
     m_packetCapture->stopWfpDriver();
     logMsg("WFP driver stopped");
-
-    if (m_wfpRedirect) {
-        m_wfpRedirect->stop();
-        logMsg("Transparent proxy redirect stopped");
-    }
 #endif
 
     m_proxyServer->stop();
@@ -255,22 +250,25 @@ void Application::start()
         logMsg("Failed to set system proxy");
     }
 
-    // Start WinDivert transparent proxy for apps that bypass system proxy
+    // WFP callout driver: captures outbound TCP connections with PID/process path,
+    // and redirects them to the local proxy via ALE Connect Redirect.
 #ifdef Q_OS_WIN
+    m_packetCapture->startWfpDriver();
+
+    // Use WFP driver for transparent proxy (ALE Connect Redirect)
     {
         quint16 transparentPort = 9529;
-        m_wfpRedirect = std::make_unique<WfpRedirect>();
-        if (m_wfpRedirect->start(transparentPort)) {
-            m_proxyServer->startTransparent(transparentPort, m_wfpRedirect.get());
-            logMsg("Transparent proxy active on port " + QString::number(transparentPort));
+        WfpDriverManager *wfpDriver = m_packetCapture->wfpDriver();
+        if (wfpDriver && wfpDriver->isRunning()) {
+            if (m_proxyServer->startTransparent(transparentPort, wfpDriver)) {
+                logMsg("Transparent proxy active on port " + QString::number(transparentPort) + " (WFP redirect)");
+            } else {
+                logMsg("Transparent proxy failed to start");
+            }
         } else {
-            logMsg("Transparent proxy failed to start");
+            logMsg("WFP driver not running, transparent proxy disabled");
         }
     }
-
-    // WFP callout driver disabled — FltSendMessage blocks outbound connections
-    // causing browser hangs. Needs non-blocking approach before re-enabling.
-    // m_packetCapture->startWfpDriver();
 #endif
 
     // Save m_mainWindow pointer to a volatile stack local BEFORE any calls

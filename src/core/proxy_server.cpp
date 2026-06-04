@@ -3,7 +3,7 @@
 #include "cert_manager.h"
 #include "mitm_engine.h"
 #ifdef Q_OS_WIN
-#include "wfp_redirect.h"
+#include "wfp_driver_manager.h"
 #endif
 #include "compat.h"
 #include <QUrl>
@@ -763,18 +763,18 @@ void ProxyServer::cleanup(Connection *conn)
 }
 
 // ============================================================================
-// Transparent proxy — intercepts WinDivert-redirected connections (Windows only)
+// Transparent proxy — intercepts WFP-redirected connections (Windows only)
 // ============================================================================
 
 #ifdef Q_OS_WIN
-bool ProxyServer::startTransparent(quint16 port, WfpRedirect *redirect)
+bool ProxyServer::startTransparent(quint16 port, WfpDriverManager *wfpDriver)
 {
     if (m_transparentServer) {
         m_transparentServer->close();
         m_transparentServer->deleteLater();
     }
 
-    m_redirect = redirect;
+    m_wfpDriver = wfpDriver;
     m_transparentServer = new QTcpServer(this);
     connect(m_transparentServer, &QTcpServer::newConnection,
             this, &ProxyServer::onTransparentConnection);
@@ -794,13 +794,14 @@ void ProxyServer::onTransparentConnection()
     while (m_transparentServer->hasPendingConnections()) {
         QTcpSocket *client = m_transparentServer->nextPendingConnection();
 
-        // Look up original destination from the redirect table
-        quint32 clientIp = client->peerAddress().toIPv4Address();
+        // Look up original destination from the WFP redirect table
+        // WFP stores addresses in network byte order, so convert from Qt's host byte order
+        quint32 clientIp = htonl(client->peerAddress().toIPv4Address());
         quint16 clientPort = client->peerPort();
         quint32 origDstIp = 0;
         quint16 origDstPort = 0;
 
-        if (!m_redirect || !m_redirect->lookupOriginal(clientIp, clientPort, origDstIp, origDstPort)) {
+        if (!m_wfpDriver || !m_wfpDriver->queryOriginalDestination(clientIp, clientPort, origDstIp, origDstPort)) {
             logMsg(QString("Transparent: no redirect info for %1:%2")
                    .arg(clientIp).arg(clientPort));
             client->disconnectFromHost();
@@ -808,9 +809,9 @@ void ProxyServer::onTransparentConnection()
             continue;
         }
 
-        // Convert original destination IP to string (fallback hostname)
+        // Convert original destination IP to string (already in network byte order)
         struct in_addr a;
-        a.s_addr = htonl(origDstIp);
+        a.s_addr = origDstIp;
         QString origDstIpStr = QString::fromLatin1(inet_ntoa(a));
 
         logMsg(QString("Transparent: new connection %1:%2 → %3:%4")

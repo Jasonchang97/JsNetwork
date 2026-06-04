@@ -17,6 +17,7 @@
 #define JSNWFP_CMD_START_CAPTURE    1
 #define JSNWFP_CMD_STOP_CAPTURE     2
 #define JSNWFP_CMD_SET_FILTER       3   // Filter by process name
+#define JSNWFP_CMD_QUERY_ORIG_DST   4   // Query original destination for redirected connection
 
 // Driver -> User-mode event types
 #define JSNWFP_EVENT_CONNECT        1   // New outbound TCP connection
@@ -44,5 +45,19 @@ typedef struct _JSNWFP_COMMAND {
     UINT32 param;                               // Command-specific parameter
     WCHAR  filterPath[JSNWFP_MAX_PATH];         // Process path filter (for SET_FILTER)
 } JSNWFP_COMMAND;
+
+// Query request (user-mode -> driver, via FilterSendMessage)
+typedef struct _JSNWFP_QUERY {
+    UINT32 clientAddr;                          // Client IP (network byte order)
+    UINT16 clientPort;                          // Client port (host byte order)
+    UINT16 padding;
+} JSNWFP_QUERY;
+
+// Query response (driver -> user-mode)
+typedef struct _JSNWFP_ORIG_DST {
+    UINT32 origAddr;                            // Original destination IP (network byte order)
+    UINT16 origPort;                            // Original destination port (host byte order)
+    UINT16 found;                               // 1=found, 0=not found
+} JSNWFP_ORIG_DST;
 
 #endif // JSNETWORK_WFP_H

@@ -116,6 +116,7 @@ public:
 #ifdef Q_OS_WIN
     void startWfpDriver();
     void stopWfpDriver();
+    WfpDriverManager *wfpDriver() const { return m_wfpDriver; }
 #endif
 
     static QStringList availableInterfaces();
