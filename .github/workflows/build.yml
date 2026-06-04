@@ -40,13 +40,22 @@ jobs:
       - name: Build WFP Driver (if WDK available)
         shell: pwsh
         run: |
-          # Check if WDK is installed
           $wdkPath = "${env:ProgramFiles(x86)}\Windows Kits\10\Include"
           if (Test-Path $wdkPath) {
             Write-Host "WDK found, building driver..."
-            & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe" driver\jsnetwork_wfp.vcxproj /p:Configuration=Release /p:Platform=x64 /p:SolutionDir="$PWD\" 2>&1
+            $msbuild = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
+            & $msbuild driver\jsnetwork_wfp.vcxproj /p:Configuration=Release /p:Platform=x64 /p:SolutionDir="$PWD\" 2>&1
             if (Test-Path "driver\x64\Release\jsnetwork_wfp.sys") {
-              Write-Host "Driver built successfully"
+              Write-Host "Driver compiled, signing..."
+              # Create test certificate and sign
+              $cert = New-SelfSignedCertificate -Subject "CN=JsNetwork Test Signing" -Type CodeSigningCert -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
+              Export-Certificate -Cert $cert -FilePath "$env:TEMP\jsnetwork.cer" -Force | Out-Null
+              Import-Certificate -FilePath "$env:TEMP\jsnetwork.cer" -CertStoreLocation Cert:\LocalMachine\Root | Out-Null
+              Import-Certificate -FilePath "$env:TEMP\jsnetwork.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPublisher | Out-Null
+              $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter "signtool.exe" | Where-Object { $_.FullName -match "x64" } | Select-Object -First 1 -ExpandProperty FullName
+              & $signtool sign /v /s My /n "JsNetwork Test Signing" /fd SHA256 "driver\x64\Release\jsnetwork_wfp.sys" 2>&1
+              Copy-Item "driver\x64\Release\jsnetwork_wfp.sys" "driver\jsnetwork_wfp.sys" -Force
+              Write-Host "Driver built and signed successfully"
             } else {
               Write-Host "Driver build failed (non-fatal, driver is optional)"
             }
@@ -83,10 +92,13 @@ jobs:
           cp "$rel\WinDivert.dll" staging\ -ErrorAction SilentlyContinue
           cp "$rel\WinDivert64.sys" staging\ -ErrorAction SilentlyContinue
           cp "$rel\WinDivert32.sys" staging\ -ErrorAction SilentlyContinue
-          # WFP Callout Driver (if built)
-          if (Test-Path "driver\x64\Release\jsnetwork_wfp.sys") {
-            cp "driver\x64\Release\jsnetwork_wfp.sys" staging\
+          # WFP Callout Driver (if built and signed)
+          if (Test-Path "driver\jsnetwork_wfp.sys") {
+            cp "driver\jsnetwork_wfp.sys" staging\
             Write-Host "WFP driver staged"
+          } elseif (Test-Path "driver\x64\Release\jsnetwork_wfp.sys") {
+            cp "driver\x64\Release\jsnetwork_wfp.sys" staging\
+            Write-Host "WFP driver staged (unsigned)"
           }
           # OpenSSL/zlib runtime DLLs from vcpkg bin directory
           foreach ($dll in (Get-ChildItem "$env:DEPS_DIR\bin\libcrypto*.dll","$env:DEPS_DIR\bin\libssl*.dll","$env:DEPS_DIR\bin\zlib*.dll" -ErrorAction SilentlyContinue)) { cp $dll.FullName staging\ }

@@ -28,6 +28,12 @@ CTestTestfile.cmake
 
 # Build output
 dist/
+driver/x64/
+driver/*.sys
+driver/*.obj
+driver/*.pdb
+driver/*.tlog
+driver/*.recipe
 
 # Dev-local scripts
 _update_lsp.bat
